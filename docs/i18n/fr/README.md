@@ -1,4 +1,4 @@
-> Remarque : le README japonais à la racine du dépôt est l'original. Cette version est une traduction par IA, en mots simples, et n'a pas encore été relue par des locuteurs natifs.
+> Remarque : le README.md japonais à la racine du dépôt est l'original. Cette version a été traduite par une IA, puis relue par une IA pour sa fluidité en langue maternelle ; elle n'a pas encore été relue par une personne de langue maternelle.
 
 # pl2pl
 
@@ -17,7 +17,7 @@ Il fonctionne sous Windows, Linux et Mac (version 0.1.0, encore en construction)
 |---|---|
 | `pl2pl php` | PHP (Laravel / Symfony) → FastAPI. Plus de détails dans [PHP.md](../../PHP.md) (en japonais) |
 | `pl2pl web` | Regarde dans un dossier, repère Java, COBOL, PHP et Flask/Django, et confie chacun au bon outil |
-| `pl2pl ir` | (version d'essai) Met les « routes » de PHP, Python et Java sous une même forme, puis produit du JSON, de l'OpenAPI ou un squelette FastAPI |
+| `pl2pl ir` | (version d'essai) Met les « routes » de PHP, Python et Java sous une même forme, puis produit du JSON, de l'OpenAPI ou un squelette FastAPI. La conversion PHP place aussi les types, le contenu des fonctions, les modèles, les middlewares et les gabarits sous cette forme avant d'écrire |
 | `pl2pl watch` | Trouve les nouvelles versions des langages et des outils, et se met à jour tout seul |
 | `pl2pl cobol` | COBOL + JCL → GnuCOBOL (Linux) |
 | `pl2pl omp` / `kokkos` / `gpu` | Rend les boucles C/C++ plus rapides (gpu est une version d'essai) |

@@ -1,4 +1,4 @@
-> 안내: 저장소 루트의 일본어 PORTING.md가 원문입니다. 이 문서는 쉬운 말로 쓴 AI 번역이며, 아직 원어민의 검수를 받지 않았습니다.
+> 안내: 저장소 루트의 일본어 PORTING.md가 원문입니다. 이 문서는 쉬운 말로 쓴 것으로, AI가 번역하고 AI가 원어민 수준의 자연스러움을 검수했습니다. 사람 원어민의 검수는 아직 받지 않았습니다.
 
 # pl2pl 인수인계
 (지난 자세한 기록은 `docs/HISTORY-ja.md`에 있습니다. 일본어입니다.)
@@ -8,8 +8,8 @@
 - PHP → FastAPI는 실제 FastAPI로 종단 간 테스트를 마쳤습니다: 라우트, Eloquent, 쿼리 빌더, Blade, 미들웨어, 관계, `@can` 계열.
 - `pl2pl web`이 이제 PHP도 알아봅니다.
 - `pl2pl watch`가 새 버전을 찾고, 테스트하고, 고치고, 안 되면 알려 줍니다. GitHub에서도 매일 밤과 아침에 최신 버전으로 테스트합니다.
-- `pl2pl ir`(시험 단계)이 PHP, Python, Java(Spring, JAX-RS, Servlet, Spark)의 라우트를 공통 모양으로 만들어 JSON, OpenAPI, FastAPI 뼈대를 냅니다. 출력이 실제로 Python에서 읽히는 것을 확인했습니다.
-- 소개·다운로드 페이지 공개: <https://easy-web.tokyo/pl2pl/>(VPS, 정적).
+- `pl2pl ir`(시험 단계)이 PHP, Python, Java(Spring, JAX-RS, Servlet, Spark)의 라우트를 공통 모양으로 만들어 JSON, OpenAPI, FastAPI 뼈대를 냅니다. IR은 타입이 있는 인자, 함수 본문, 모델, 미들웨어, 템플릿도 담고, `pl2pl php`는 이제 `src/ir_emit.rs`의 공통 출력기를 거쳐 씁니다(출력은 이전과 같음, 통합 시험 49건 통과).
+- 소개·다운로드 페이지 공개: <https://easy-web.tokyo/pl2pl/>(VPS, 정적). easy-web.tokyo 첫 화면에도 카드가 있습니다.
 - COBOL_to와 Java_to는 `converters/`에 합쳤습니다.
 
 ## 아직 남은 일(중요한 순)
@@ -17,11 +17,11 @@
 2. IR에 자료형과 함수 내용을 담기. 지금의 FastAPI 출력(`pl2pl php`)을 IR을 거치게 하기. 라우트 찾기에서 놓치는 것이 있으면 tree-sitter를 검토.
 3. 진짜 새 버전으로 `watch`를 시험함: fastapi 0.165.0(starlette 1.10)에서 `tests/run-php.sh`가 49개 통과해서 registry의 시험 완료 버전을 0.165로 올렸습니다. 남은 것: 새 laravel 13 / django 6.1 / spring-boot 4.1은 통합 시험이 실제 프레임워크를 쓰지 않아서 '미확인'으로 남습니다(실물을 쓰는 시험을 만들 때까지는 보고만 합니다).
 4. 컴퓨터에서 매일 밤·아침 자동 실행 등록(아직 안 함: 이 PC에서는 확인 명령이 돌지 않아 오경보가 남. 예시는 `scripts/pl2pl-watch.cmd` 맨 위).
-5. easy-web.tokyo 첫 화면에 pl2pl 소개 카드 추가.
-6. PHP: 클래스로 만든 Blade 부품, `$attributes`, `@php`, `morphToMany`.
-7. aruaru-llm 연동(`llm setup` 실제 설치는 미확인). Kokkos GPU 실행, open-cuda / open-directx에서 커널 실행.
+5. (완료) easy-web.tokyo 첫 화면에 pl2pl 카드를 넣어 실서비스에 반영했습니다(open-easy-web `95cb1e7`, 이전 바이너리는 `server/target/release/open-easy-web-server.before-pl2pl-card-20261119`).
+6. PHP(완료, 한계 있음): Blade `@php`가 대입과 `++` `--` `+=` `-=` `*=` `/=` `.=`를 `{% set %}`으로 바꿉니다. `$attributes`는 출력, `->merge`(문자열 값 또는 변환 가능한 식), `->class([...])`(문자열 목록), `->only`, `->except`가 동작합니다. `morphToMany`(중간 테이블의 타입 열)와 클래스로 만든 Blade 컴포넌트(`app/View/Components/*.php`: 생성자 인자가 기본값과 `_props`가 되고, `render()` 안의 `view('x.y')`도 따라감)도 지원합니다(통합 시험 55건, 단위 시험 41건). 남은 것: 컴포넌트 클래스의 공개 메서드(템플릿의 `{{ $method() }}`는 TODO로 남고 보고서에 개수를 냄), 키가 있는(조건부) `->class()`, if/foreach나 함수 호출이 있는 `@php`(TODO로 남음).
+7. aruaru-llm 연동(완료): 2026-11-19에 aruaru-llm v0.2.5를 가져와 실제 `pl2pl llm setup`을 실행했습니다. 자동 선택인 3B는 가중치가 여러 조각(샤드)으로 나뉘어 있어 실패했으므로, 이제 설치는 한 단계 작은 모델로 물러납니다(모델을 직접 지정한 경우는 제외). `GenerateQwen`은 qwen2.5-1.5b-instruct(약 2.9GB, CPU)로 글을 만들어 냅니다. **`pl2pl php --explain`**(선택 사항, `--explain-max N`, 기본 3)은 보고서의 각 TODO 항목 아래에 AI 메모를 붙입니다. 실측: CPU에서 항목당 약 2분이고, **품질이 낮아 틀릴 때도 있어**(2건 중 1건이 빗나감) 기본값은 끔입니다. 다시 시작한 aruaru-llm은 모델이 선택되지 않은 상태(400)이므로, 먼저 설치된 모델을 고릅니다. **더 큰 모델(약 12GB)**: aruaru-llm 카탈로그에서 가장 큰 것은 3B(약 6.2GB)이고, 3B와 7B는 여러 샤드 파일로 배포되어 지금의 설치 프로그램으로는 받을 수 없습니다. 먼저 샤드 지원(aruaru-llm 쪽)과 CPU 속도(1.5B에서도 이미 이만큼 느림)가 필요합니다. GPU에서의 Kokkos와 open-cuda / open-directx 위의 커널은 아직 미확인입니다. **GPU(2026-11-19 확인)**: GeForce GT 730(2GB, sm_35, 드라이버 475 = CUDA 11.4급)에서 관리자 권한 없이 micromamba(NVIDIA의 conda 채널)로 CUDA 11.8 nvcc를 설치하고, 간단한 CUDA 커널과 `pl2pl gpu --target open-cuda`의 출력(`vec_loop12.cu`)을 실제 GPU에서 돌려 CPU와 0건의 불일치를 확인했습니다(`tests/gpu-check.ps1`). 함정: MSVC 14.44는 `-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH`와 `-allow-unsupported-compiler`가 필요하고, PyPI에는 Windows용 nvcc가 없으며, CUDA 12는 sm_35를 대상으로 할 수 없습니다. **아직 미확인**: Kokkos CUDA 백엔드, 그리고 open-cuda(Rust 구현)와 open-directx에서의 실행.
 8. 원래의 COBOL_to와 Java_to 삭제(**되돌릴 수 없으니 마지막 확인을 받은 뒤에**).
-9. `docs/DESIGN.md`는 소유자가 씁니다. `docs/LANGUAGES.md`가 오래되지 않았는지 확인.
+9. `docs/DESIGN.md`는 소유자가 씁니다. 2026-11-19에 `docs/LANGUAGES.md`를 다시 읽었고 현재 상태와 어긋난 곳은 없었습니다(Java와 COBOL에는 변환기가 있음). 아직 지식에 바탕을 둔 목록이며, 새로 웹 검색으로 확인한 것은 아닙니다.
 
 ## 테스트
 `bash tests/run-all.sh`(WSL) / `bash tests/run-php.sh`(PHP 종단 간) / `cargo test --release`

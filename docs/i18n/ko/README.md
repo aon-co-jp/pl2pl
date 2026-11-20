@@ -1,4 +1,4 @@
-> 안내: 저장소 루트의 일본어 README가 원문입니다. 이 문서는 쉬운 말로 쓴 AI 번역이며, 아직 원어민의 검수를 받지 않았습니다.
+> 안내: 저장소 루트의 일본어 README.md가 원문입니다. 이 문서는 쉬운 말로 쓴 것으로, AI가 번역하고 AI가 원어민 수준의 자연스러움을 검수했습니다. 사람 원어민의 검수는 아직 받지 않았습니다.
 
 # pl2pl
 
@@ -17,7 +17,7 @@ Windows, Linux, Mac에서 쓸 수 있습니다(v0.1.0, 아직 만드는 중입�
 |---|---|
 | `pl2pl php` | PHP(Laravel / Symfony) → FastAPI. 자세한 내용은 [PHP.md](../../PHP.md)(일본어) |
 | `pl2pl web` | 폴더 안을 살펴 Java, COBOL, PHP, Flask/Django를 알아보고 알맞은 도구에 맡김 |
-| `pl2pl ir` | (시험 단계) PHP, Python, Java의 "경로(라우트)"를 같은 모양으로 만들어 JSON, OpenAPI, FastAPI 뼈대로 출력 |
+| `pl2pl ir` | (시험 단계) PHP, Python, Java의 "경로(라우트)"를 같은 모양으로 만들어 JSON, OpenAPI, FastAPI 뼈대로 출력합니다. PHP 변환도 타입, 함수 본문, 모델, 미들웨어, 템플릿을 이 모양에 담은 뒤에 씁니다 |
 | `pl2pl watch` | 언어와 도구의 새 버전을 찾아 스스로 따라감 |
 | `pl2pl cobol` | COBOL + JCL → GnuCOBOL(Linux) |
 | `pl2pl omp` / `kokkos` / `gpu` | C/C++ 반복문을 더 빠르게 돌아가게 함(gpu는 시험 단계) |

@@ -1,4 +1,4 @@
-> Nota: o PORTING.md em japonês na raiz do repositório é o original. Esta versão é uma tradução feita por IA, em palavras simples, e ainda não foi revisada por falantes nativos.
+> Nota: o PORTING.md em japonês na raiz do repositório é o original. Esta versão foi traduzida por IA e revisada por uma IA quanto à naturalidade no idioma; ainda não foi revisada por uma pessoa nativa.
 
 # pl2pl – passagem de bastão
 (As notas detalhadas anteriores estão em `docs/HISTORY-ja.md`, em japonês.)
@@ -8,8 +8,8 @@
 - PHP → FastAPI está testado de ponta a ponta com FastAPI real: rotas, Eloquent, construtor de consultas, Blade, middleware, relações e a família `@can`.
 - O `pl2pl web` agora também reconhece PHP.
 - O `pl2pl watch` encontra versões novas, testa, conserta problemas e envia um alerta se nada der certo. O GitHub também testa com as versões mais recentes toda noite e toda manhã.
-- O `pl2pl ir` (versão de teste) coloca as rotas de PHP, Python e Java (Spring, JAX-RS, Servlet, Spark) numa forma comum e gera JSON, OpenAPI ou um esqueleto de FastAPI. Conferimos que o Python realmente consegue ler a saída.
-- A página de apresentação e download está no ar: <https://easy-web.tokyo/pl2pl/> (no VPS, estática).
+- O `pl2pl ir` (versão de teste) coloca as rotas de PHP, Python e Java (Spring, JAX-RS, Servlet, Spark) numa forma comum e gera JSON, OpenAPI ou um esqueleto de FastAPI. A IR também carrega parâmetros com tipo, conteúdo das funções, modelos, middleware e templates, e o `pl2pl php` agora escreve sua saída pelo emissor comum em `src/ir_emit.rs` (saída inalterada em relação a antes; 49 verificações de ponta a ponta passam).
+- A página de apresentação e download está no ar: <https://easy-web.tokyo/pl2pl/> (no VPS, estática). Também há um cartão na página inicial do easy-web.tokyo.
 - COBOL_to e Java_to estão incorporados em `converters/`.
 
 ## O que falta (o mais importante primeiro)
@@ -17,11 +17,11 @@
 2. Colocar tipos e conteúdo das funções na IR. Fazer a saída atual do FastAPI (`pl2pl php`) passar pela IR. Se a busca de rotas deixar coisas passarem, pensar em tree-sitter.
 3. O `watch` foi testado com uma versão nova real: com fastapi 0.165.0 (starlette 1.10), `tests/run-php.sh` passou 49 verificações, então a versão testada do registro subiu para 0.165. Pendente: os novos laravel 13 / django 6.1 / spring-boot 4.1 continuam «não verificados», porque os testes de ponta a ponta não usam os frameworks reais (só relatório até existirem testes assim).
 4. Programar num PC as execuções da noite e da manhã (ainda não feito: o comando de verificação não funciona neste PC e daria alarmes falsos; veja um exemplo no início de `scripts/pl2pl-watch.cmd`).
-5. Adicionar um cartão do pl2pl na página inicial do easy-web.tokyo.
-6. PHP: peças do Blade escritas como classes, `$attributes`, `@php`, `morphToMany`.
-7. Integração com o aruaru-llm (a instalação real com `llm setup` não foi verificada). Kokkos na GPU; kernels no open-cuda / open-directx.
+5. (Feito) Há um cartão do pl2pl na página inicial do easy-web.tokyo, já no ar em produção (open-easy-web `95cb1e7`; o binário antigo é `server/target/release/open-easy-web-server.before-pl2pl-card-20261119`).
+6. PHP (feito, com limites): o `@php` do Blade agora converte atribuições e `++` `--` `+=` `-=` `*=` `/=` `.=` em `{% set %}`; `$attributes` funciona como saída, e também `->merge` (valores de texto ou expressões convertíveis), `->class([...])` (uma lista de textos), `->only` e `->except`; `morphToMany` (coluna de tipo na tabela intermediária); e os componentes do Blade escritos como classes (`app/View/Components/*.php`: os argumentos do construtor viram valores padrão e `_props`, e um `view('x.y')` dentro de `render()` é seguido) (55 verificações de ponta a ponta, 41 testes unitários). Ainda em aberto: os métodos públicos de uma classe de componente (um `{{ $method() }}` no seu template continua como TODO, e o relatório os conta), `->class()` com chaves (condicional) e `@php` com if/foreach ou chamadas de função (continua como TODO).
+7. Integração com o aruaru-llm (feita): em 2026-11-19 incorporamos o aruaru-llm v0.2.5 e executamos um `pl2pl llm setup` de verdade. A escolha automática, 3B, falhou porque seus pesos são divididos em fragmentos (shards); por isso a instalação agora recua para o próximo modelo menor (não quando se fixa um). `GenerateQwen` devolve texto com qwen2.5-1.5b-instruct (cerca de 2,9 GB, na CPU). **`pl2pl php --explain`** (opcional; `--explain-max N`, padrão 3) acrescenta uma nota de IA sob cada item TODO do relatório. Medido: cerca de 2 minutos por item na CPU, e **a qualidade é fraca e às vezes errada** (1 de 2 errou o alvo), por isso vem desligado por padrão. Um aruaru-llm reiniciado não tem modelo escolhido (400), então escolhe primeiro um instalado. **Um modelo maior (cerca de 12 GB)**: o maior do catálogo do aruaru-llm é o 3B (cerca de 6,2 GB), e 3B e 7B vêm em vários arquivos fragmento que o instalador atual não consegue baixar. Primeiro vêm o suporte a fragmentos (no aruaru-llm) e a velocidade da CPU (já é tão lenta com 1.5B). Kokkos na GPU e kernels no open-cuda / open-directx continuam sem verificação. **GPU (verificado em 2026-11-19)**: numa GeForce GT 730 (2 GB, sm_35, driver 475 = classe CUDA 11.4), instalamos o nvcc do CUDA 11.8 sem direitos de administrador pelo micromamba (canal conda da NVIDIA), executamos um kernel CUDA simples e a saída de `pl2pl gpu --target open-cuda` (`vec_loop12.cu`) na GPU real, e vimos 0 divergências em relação à CPU (`tests/gpu-check.ps1`). Armadilhas: o MSVC 14.44 precisa de `-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH` e `-allow-unsupported-compiler`; o PyPI não tem nvcc para Windows; o CUDA 12 não consegue mirar sm_35. **Continua sem verificação**: o backend CUDA do Kokkos e a execução no open-cuda (a implementação em Rust) e no open-directx.
 8. Apagar os COBOL_to e Java_to originais (**sem volta: pedir antes a aprovação final**).
-9. O proprietário escreve `docs/DESIGN.md`. Conferir se `docs/LANGUAGES.md` não está desatualizado.
+9. O proprietário escreve `docs/DESIGN.md`. Relemos `docs/LANGUAGES.md` em 2026-11-19 e não achamos nada fora do estado atual (Java e COBOL têm conversores). Continua sendo uma lista baseada em conhecimento, não conferida com uma busca nova na web.
 
 ## Testes
 `bash tests/run-all.sh` (WSL) / `bash tests/run-php.sh` (PHP de ponta a ponta) / `cargo test --release`
