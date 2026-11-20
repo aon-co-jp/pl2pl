@@ -12,3 +12,11 @@
 - **COBOL_to / Java_to**:已并入 `converters/`。删除原仓库无法撤销,须先得到最终确认。
 - **翻译系统**(人类语言)与转换器分开。转换器不依赖 LLM。
 - **文档语言**:日文文件是原文。英文文件用简单的话重写过。`docs/i18n/` 里的其他语言是 AI 翻译(尚未经母语者审校)。更早的经过见 `docs/HISTORY-ja.md`。
+
+## v0.2.1 的新内容(2026-11-20)
+- 在 `pl2pl web --backend` 中选 `rpoem` / `rporea` 时会显示提示(日文和英文):RPoem 已包含 Tauri 兼容、WunderGraph Cosmo 兼容、tokio 和 WASM,因此不要另选;HTML5 和 CSS3 会用,但尽量少;按设计不使用 JavaScript、TypeScript、Node.js 和 REST。用 `--also` 添加的东西若已被包含,会被拒绝(退出码 2);已包含但兼容尚未成熟的,仍可选择,并附带提醒。
+- `pl2pl maturity [--repo DIR] [--llm URL] [--apply]` 通过运行探测测试来判断成熟度(台账:`registry/maturity.toml`)。aruaru-llm 的 AI 意见不会单独改变判断结果。
+- 在 RPoem / RPoRea 以外的组合中,`--also nodejs`(或 `next.js`)会被接受并附带提示:我们不强加“不用 Node.js”的方针,但不推荐。会列出适合所选语言的替代品(RPoem / RPoRea + Reaxt、FastAPI + Jinja2、RS-Node.js,以及我们尚未验证的其他框架)。
+- 一起开发的姐妹仓库:Reaxt、RPoRea、RPoem、RMojo、open-cosmo、RS-TypeScript、RS-JavaScript、RS-Node.js 和 pl2pl。一个有变动,当天检查其他仓库。
+- `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` 和 `webpage/info.html` 用 11 种语言说明 RPoRea / RPoem 的设计思想及其优缺点。
+- 原来的 `COBOL_to` / `Java_to` 保留(不删除);`converters/` 中合并的副本输出完全一致。

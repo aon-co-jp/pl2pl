@@ -56,5 +56,13 @@ pl2pl ir ./project --out ./out --format openapi
 - Pick your own mix: `pl2pl web <dir> --backend <rust-axum|rust-poem|fastapi|mfastapi|rpoem|rporea> [--frontend bootstrap-ts|rust-wasm|none] [--db none|mysql|mariadb|postgres|sqlite] --out <dir>`. COBOL is rewritten; C, C++ and Fortran keep running as they are and the web calls them.
 - `pl2pl c2rust` (simple C and C++) and `pl2pl f2rust` (simple Fortran) write Rust. `pl2pl cobol --os <linux|macos|unix|windows>` makes a build script for GnuCOBOL.
 
+## What's new in v0.2.1 (2026-11-20)
+- Pick `rpoem` / `rporea` in `pl2pl web --backend` and it shows notices (Japanese and English): RPoem already includes Tauri-compatible and WunderGraph Cosmo-compatible features, tokio and WASM, so do not pick those; HTML5 and CSS3 are used but kept small; JavaScript, TypeScript, Node.js and REST are not used by design. Things added with `--also` that are already included are declined (exit code 2); things included but not yet mature stay selectable, with a caution.
+- `pl2pl maturity [--repo DIR] [--llm URL] [--apply]` judges that maturity by running probe tests (ledger: `registry/maturity.toml`). The AI opinion from aruaru-llm never changes the verdict by itself.
+- With stacks other than RPoem / RPoRea, `--also nodejs` (or `next.js`) is accepted with a notice: we do not impose our no-Node.js policy, but we do not recommend it. Alternatives for the chosen language are listed (RPoem / RPoRea + Reaxt, FastAPI + Jinja2, RS-Node.js, and others we have not verified).
+- Sister repositories developed together: Reaxt, RPoRea, RPoem, RMojo, open-cosmo, RS-TypeScript, RS-JavaScript, RS-Node.js and pl2pl. When one changes, the others are checked the same day.
+- `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` and `webpage/info.html` explain the design principles of RPoRea / RPoem with pros and cons in 11 languages.
+- The original `COBOL_to` / `Java_to` are kept (not deleted); the merged copies in `converters/` gave identical output.
+
 ## Learn more
 [LANGUAGES.md](../../LANGUAGES.md) (list of languages) / [COMBINATIONS.md](../../COMBINATIONS.md) (combinations) / [DESIGN.md](../../DESIGN.md) (the design, written by the owner) / [components/README.md](../../../components/README.md) (parts that come with it). These files are in Japanese.

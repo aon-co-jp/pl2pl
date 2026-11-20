@@ -12,3 +12,11 @@
 - **COBOL_to / Java_to**: already merged into `converters/`. Deleting the original repositories cannot be undone, so ask for a final OK first.
 - **Translation system** (human language) stays apart from the converters. Converters do not rely on an LLM.
 - **Document languages**: the Japanese files are the originals. The English files were rewritten in plain words. The other eight languages (`docs/i18n/`) are AI translations of the same content (not yet checked by native speakers). Older history: `docs/HISTORY-ja.md`.
+
+## What's new in v0.2.1 (2026-11-20)
+- Pick `rpoem` / `rporea` in `pl2pl web --backend` and it shows notices (Japanese and English): RPoem already includes Tauri-compatible and WunderGraph Cosmo-compatible features, tokio and WASM, so do not pick those; HTML5 and CSS3 are used but kept small; JavaScript, TypeScript, Node.js and REST are not used by design. Things added with `--also` that are already included are declined (exit code 2); things included but not yet mature stay selectable, with a caution.
+- `pl2pl maturity [--repo DIR] [--llm URL] [--apply]` judges that maturity by running probe tests (ledger: `registry/maturity.toml`). The AI opinion from aruaru-llm never changes the verdict by itself.
+- With stacks other than RPoem / RPoRea, `--also nodejs` (or `next.js`) is accepted with a notice: we do not impose our no-Node.js policy, but we do not recommend it. Alternatives for the chosen language are listed (RPoem / RPoRea + Reaxt, FastAPI + Jinja2, RS-Node.js, and others we have not verified).
+- Sister repositories developed together: Reaxt, RPoRea, RPoem, RMojo, open-cosmo, RS-TypeScript, RS-JavaScript, RS-Node.js and pl2pl. When one changes, the others are checked the same day.
+- `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` and `webpage/info.html` explain the design principles of RPoRea / RPoem with pros and cons in 11 languages.
+- The original `COBOL_to` / `Java_to` are kept (not deleted); the merged copies in `converters/` gave identical output.

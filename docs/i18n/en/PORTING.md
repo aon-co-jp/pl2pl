@@ -15,7 +15,7 @@
 ## Still to do (most important first)
 1. **Check**: a real e-mail arriving (`version-control --test-notify`; this PC has no SMTP settings), automatic fixing through version-control `--loop`, and a test on the newest fastapi (the nightly run on GitHub will check it).
 2. Put types and function bodies into the IR. Send the current FastAPI output (`pl2pl php`) through the IR. If route finding misses things, think about tree-sitter.
-3. Try `watch` with real new versions (laravel, symfony, spring-boot, flask, django and poem still count as unchecked).
+3. `watch` was tried with a real new version: with fastapi 0.165.0 (starlette 1.10), `tests/run-php.sh` passed 49 checks, so the registry's tested version moved to 0.165. Still open: the new laravel 13 / django 6.1 / spring-boot 4.1 stay "unchecked" because the end-to-end tests do not use the real frameworks (report only until such tests exist).
 4. Set up the nightly and morning runs on a PC (not done: the check command does not work on this PC and would give false alarms; see the top of `scripts/pl2pl-watch.cmd` for an example).
 5. (Done) A pl2pl card is on the easy-web.tokyo top page and live in production (open-easy-web `95cb1e7`; the old binary is `server/target/release/open-easy-web-server.before-pl2pl-card-20261119`).
 6. PHP (done, with limits): Blade `@php` now handles assignments and `++` `--` `+=` `-=` `*=` `/=` `.=` as `{% set %}`; `$attributes` works as output, `->merge` (string values or convertible expressions), `->class([...])` (a list of strings), `->only` and `->except`; `morphToMany` (type column in the pivot table); and class-based Blade components (`app/View/Components/*.php`: constructor arguments become defaults and `_props`, and a `view('x.y')` in `render()` is followed) (55 end-to-end checks, 41 unit tests). Still open: public methods of a component class (a `{{ $method() }}` in its template stays a TODO, and the report counts them), keyed (conditional) `->class()`, and `@php` with if/foreach or function calls (stays a TODO).
@@ -28,3 +28,11 @@
 
 ## Message for starting again
 “Resume F:\pl2pl. Work through ‘Still to do’ in PORTING.md from the top. Never hide what cannot be rewritten; leave a TODO. Check by really running before saying it is done. Reply in Japanese only. Commit and push at each step, and update the VPS too.”
+
+## What's new in v0.2.1 (2026-11-20)
+- Pick `rpoem` / `rporea` in `pl2pl web --backend` and it shows notices (Japanese and English): RPoem already includes Tauri-compatible and WunderGraph Cosmo-compatible features, tokio and WASM, so do not pick those; HTML5 and CSS3 are used but kept small; JavaScript, TypeScript, Node.js and REST are not used by design. Things added with `--also` that are already included are declined (exit code 2); things included but not yet mature stay selectable, with a caution.
+- `pl2pl maturity [--repo DIR] [--llm URL] [--apply]` judges that maturity by running probe tests (ledger: `registry/maturity.toml`). The AI opinion from aruaru-llm never changes the verdict by itself.
+- With stacks other than RPoem / RPoRea, `--also nodejs` (or `next.js`) is accepted with a notice: we do not impose our no-Node.js policy, but we do not recommend it. Alternatives for the chosen language are listed (RPoem / RPoRea + Reaxt, FastAPI + Jinja2, RS-Node.js, and others we have not verified).
+- Sister repositories developed together: Reaxt, RPoRea, RPoem, RMojo, open-cosmo, RS-TypeScript, RS-JavaScript, RS-Node.js and pl2pl. When one changes, the others are checked the same day.
+- `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` and `webpage/info.html` explain the design principles of RPoRea / RPoem with pros and cons in 11 languages.
+- The original `COBOL_to` / `Java_to` are kept (not deleted); the merged copies in `converters/` gave identical output.

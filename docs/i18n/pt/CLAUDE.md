@@ -12,3 +12,11 @@
 - **COBOL_to / Java_to**: já incorporados em `converters/`. Apagar os repositórios originais não tem volta: pedir antes a aprovação final.
 - **Sistema de tradução** (língua humana): separado dos conversores. Os conversores não dependem de um LLM.
 - **Idiomas da documentação**: os arquivos em japonês são os originais. Os arquivos em inglês foram reescritos em palavras simples. Os demais idiomas em `docs/i18n/` são traduções por IA (ainda sem revisão de nativos). Histórico anterior: `docs/HISTORY-ja.md`.
+
+## Novidades da v0.2.1 (2026-11-20)
+- Ao escolher `rpoem` / `rporea` em `pl2pl web --backend`, aparecem avisos (japonês e inglês): o RPoem já inclui recursos compatíveis com Tauri e WunderGraph Cosmo, tokio e WASM, então não os escolha à parte; HTML5 e CSS3 são usados, mas em pouca quantidade; JavaScript, TypeScript, Node.js e REST não são usados por projeto. O que for adicionado com `--also` e já estiver incluído é recusado (código de saída 2); o que está incluído mas ainda não é maduro pode ser escolhido, com um aviso.
+- `pl2pl maturity [--repo DIR] [--llm URL] [--apply]` julga essa maturidade rodando testes de sondagem (registro: `registry/maturity.toml`). A opinião da IA do aruaru-llm nunca muda sozinha o veredito.
+- Com pilhas diferentes de RPoem / RPoRea, `--also nodejs` (ou `next.js`) é aceito com um aviso: não impomos nossa regra de «sem Node.js», mas não o recomendamos. São listadas alternativas para a linguagem escolhida (RPoem / RPoRea + Reaxt, FastAPI + Jinja2, RS-Node.js e outras que não verificamos).
+- Repositórios irmãos desenvolvidos juntos: Reaxt, RPoRea, RPoem, RMojo, open-cosmo, RS-TypeScript, RS-JavaScript, RS-Node.js e pl2pl. Quando um muda, os outros são conferidos no mesmo dia.
+- `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` e `webpage/info.html` explicam os princípios de projeto do RPoRea / RPoem, com vantagens e desvantagens, em 11 idiomas.
+- Os originais `COBOL_to` / `Java_to` foram mantidos (não apagados); as cópias incorporadas em `converters/` deram saída idêntica.

@@ -56,5 +56,13 @@ pl2pl ir ./project --out ./out --format openapi
 - Elige tu combinación: `pl2pl web <dir> --backend <rust-axum|rust-poem|fastapi|mfastapi|rpoem|rporea> [--frontend bootstrap-ts|rust-wasm|none] [--db none|mysql|mariadb|postgres|sqlite] --out <dir>`. El COBOL se reescribe; C, C++ y Fortran siguen funcionando tal cual y la web los llama.
 - `pl2pl c2rust` (C y C++ sencillos) y `pl2pl f2rust` (Fortran sencillo) generan Rust. `pl2pl cobol --os <linux|macos|unix|windows>` crea un script de compilación para GnuCOBOL.
 
+## Novedades de la v0.2.1 (2026-11-20)
+- Si eliges `rpoem` / `rporea` en `pl2pl web --backend`, se muestran avisos (japonés e inglés): RPoem ya incluye funciones compatibles con Tauri y WunderGraph Cosmo, tokio y WASM, así que no los elijas aparte; HTML5 y CSS3 se usan, pero en poca cantidad; JavaScript, TypeScript, Node.js y REST no se usan por diseño. Lo que se añade con `--also` y ya está incluido se rechaza (código de salida 2); lo que está incluido pero aún no es maduro se puede elegir, con una advertencia.
+- `pl2pl maturity [--repo DIR] [--llm URL] [--apply]` juzga esa madurez ejecutando pruebas de sondeo (registro: `registry/maturity.toml`). La opinión de la IA de aruaru-llm nunca cambia sola el veredicto.
+- Con pilas distintas de RPoem / RPoRea, `--also nodejs` (o `next.js`) se acepta con un aviso: no imponemos nuestra regla de «sin Node.js», pero no lo recomendamos. Se listan alternativas según el lenguaje elegido (RPoem / RPoRea + Reaxt, FastAPI + Jinja2, RS-Node.js y otras que no hemos verificado).
+- Repositorios hermanos que se desarrollan juntos: Reaxt, RPoRea, RPoem, RMojo, open-cosmo, RS-TypeScript, RS-JavaScript, RS-Node.js y pl2pl. Cuando uno cambia, los demás se revisan el mismo día.
+- `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` y `webpage/info.html` explican los principios de diseño de RPoRea / RPoem, con ventajas e inconvenientes, en 11 idiomas.
+- Los originales `COBOL_to` / `Java_to` se conservan (no se borran); las copias integradas en `converters/` dieron una salida idéntica.
+
 ## Más información
 [LANGUAGES.md](../../LANGUAGES.md) (lista de lenguajes) / [COMBINATIONS.md](../../COMBINATIONS.md) (combinaciones) / [DESIGN.md](../../DESIGN.md) (el diseño, escrito por el propietario) / [components/README.md](../../../components/README.md) (piezas que vienen con la herramienta). Estos archivos están en japonés.

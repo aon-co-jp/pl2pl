@@ -12,3 +12,11 @@
 - **COBOL_to / Java_to** : déjà intégrés dans `converters/`. Supprimer les dépôts d'origine est irréversible : demander d'abord l'accord final.
 - **Système de traduction** (langue humaine) : séparé des convertisseurs. Les convertisseurs ne s'appuient pas sur un LLM.
 - **Langues de la documentation** : les fichiers japonais sont les originaux. Les fichiers anglais ont été récrits en mots simples. Les autres langues dans `docs/i18n/` sont des traductions par IA (pas encore relues par des locuteurs natifs). Historique plus ancien : `docs/HISTORY-ja.md`.
+
+## Nouveautés de la v0.2.1 (2026-11-20)
+- Si l'on choisit `rpoem` / `rporea` dans `pl2pl web --backend`, des avis s'affichent (japonais et anglais) : RPoem inclut déjà les fonctions compatibles Tauri et WunderGraph Cosmo, tokio et WASM, donc ne pas les choisir en plus ; HTML5 et CSS3 sont utilisés mais en petite quantité ; JavaScript, TypeScript, Node.js et REST ne sont pas utilisés par conception. Ce qu'on ajoute avec `--also` et qui est déjà inclus est refusé (code de sortie 2) ; ce qui est inclus mais pas encore mûr reste sélectionnable, avec une mise en garde.
+- `pl2pl maturity [--repo DIR] [--llm URL] [--apply]` juge cette maturité en lançant des tests-sondes (registre : `registry/maturity.toml`). L'avis de l'IA d'aruaru-llm ne change jamais seul le verdict.
+- Avec les piles autres que RPoem / RPoRea, `--also nodejs` (ou `next.js`) est accepté avec un avis : nous n'imposons pas notre règle « pas de Node.js », mais nous ne le recommandons pas. Des alternatives adaptées au langage choisi sont listées (RPoem / RPoRea + Reaxt, FastAPI + Jinja2, RS-Node.js, et d'autres que nous n'avons pas vérifiées).
+- Dépôts frères développés ensemble : Reaxt, RPoRea, RPoem, RMojo, open-cosmo, RS-TypeScript, RS-JavaScript, RS-Node.js et pl2pl. Quand l'un change, les autres sont vérifiés le jour même.
+- `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` et `webpage/info.html` expliquent les principes de conception de RPoRea / RPoem, avec avantages et inconvénients, en 11 langues.
+- Les originaux `COBOL_to` / `Java_to` sont conservés (non supprimés) ; les copies fusionnées dans `converters/` ont donné une sortie identique.

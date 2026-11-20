@@ -15,7 +15,7 @@
 ## Noch zu tun (Wichtigstes zuerst)
 1. **Prüfen**: Kommt eine echte E-Mail an (`version-control --test-notify`; dieser PC hat keine SMTP-Einstellungen)? Funktioniert die automatische Reparatur über version-control `--loop`? Test mit dem neuesten fastapi (der nächtliche Lauf auf GitHub prüft das).
 2. Typen und Funktionsinhalte in die IR bringen. Die jetzige FastAPI-Ausgabe (`pl2pl php`) über die IR laufen lassen. Wenn die Routensuche etwas übersieht, tree-sitter in Betracht ziehen.
-3. `watch` mit echten neuen Versionen ausprobieren (laravel, symfony, spring-boot, flask, django und poem gelten noch als ungeprüft).
+3. `watch` wurde mit einer echten neuen Version ausprobiert: Mit fastapi 0.165.0 (starlette 1.10) bestand `tests/run-php.sh` 49 Prüfungen, daher rückte die getestete Version in der Registry auf 0.165. Offen: Die neuen laravel 13 / django 6.1 / spring-boot 4.1 bleiben „ungeprüft“, weil die Durchlauftests die echten Frameworks nicht nutzen (nur Meldung, bis es solche Tests gibt).
 4. Die nächtlichen und morgendlichen Läufe auf einem PC einrichten (noch nicht getan: Der Prüfbefehl läuft auf diesem PC nicht und würde Fehlalarme geben; ein Beispiel steht oben in `scripts/pl2pl-watch.cmd`).
 5. Eine pl2pl-Karte auf die Startseite von easy-web.tokyo setzen.
 6. PHP: Blade-Bausteine als Klassen, `$attributes`, `@php`, `morphToMany`.
@@ -28,3 +28,11 @@
 
 ## Nachricht zum Weitermachen
 „F:\pl2pl fortsetzen. ‚Noch zu tun‘ in PORTING.md von oben abarbeiten. Was sich nicht umschreiben lässt, nie verstecken, sondern als TODO stehen lassen. Erst durch echtes Ausführen prüfen, dann Erledigung melden. Antworten nur auf Japanisch. Bei jedem Schritt committen und pushen, auch den VPS aktualisieren.“
+
+## Neu in v0.2.1 (2026-11-20)
+- Wählt man bei `pl2pl web --backend` `rpoem` / `rporea`, erscheinen Hinweise (Japanisch und Englisch): RPoem enthält schon Tauri- und WunderGraph-Cosmo-kompatible Funktionen, tokio und WASM, also nicht extra wählen; HTML5 und CSS3 werden genutzt, aber knapp gehalten; JavaScript, TypeScript, Node.js und REST werden vom Entwurf her nicht genutzt. Was man mit `--also` hinzufügt und schon enthalten ist, wird abgelehnt (Exit-Code 2); was enthalten, aber noch nicht ausgereift ist, bleibt mit Warnhinweis wählbar.
+- `pl2pl maturity [--repo DIR] [--llm URL] [--apply]` beurteilt diese Reife mit Testläufen (Liste: `registry/maturity.toml`). Die KI-Meinung von aruaru-llm ändert das Urteil nie allein.
+- Bei Stacks außer RPoem / RPoRea wird `--also nodejs` (oder `next.js`) mit Hinweis akzeptiert: Wir zwingen unsere Regel „kein Node.js“ niemandem auf, empfehlen es aber nicht. Alternativen für die gewählte Sprache werden aufgelistet (RPoem / RPoRea + Reaxt, FastAPI + Jinja2, RS-Node.js und weitere, die wir nicht geprüft haben).
+- Schwester-Repositorys, die gemeinsam entwickelt werden: Reaxt, RPoRea, RPoem, RMojo, open-cosmo, RS-TypeScript, RS-JavaScript, RS-Node.js und pl2pl. Ändert sich eines, werden die anderen am selben Tag geprüft.
+- `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` und `webpage/info.html` erklären die Entwurfsprinzipien von RPoRea / RPoem mit Vor- und Nachteilen in 11 Sprachen.
+- Die ursprünglichen `COBOL_to` / `Java_to` bleiben erhalten (nicht gelöscht); die zusammengeführten Kopien in `converters/` lieferten identische Ausgabe.

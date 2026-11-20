@@ -56,5 +56,13 @@ pl2pl ir ./project --out ./out --format openapi
 - Choisissez votre combinaison : `pl2pl web <dir> --backend <rust-axum|rust-poem|fastapi|mfastapi|rpoem|rporea> [--frontend bootstrap-ts|rust-wasm|none] [--db none|mysql|mariadb|postgres|sqlite] --out <dir>`. Le COBOL est réécrit ; C, C++ et Fortran tournent tels quels et sont appelés par le web.
 - `pl2pl c2rust` (C et C++ simples) et `pl2pl f2rust` (Fortran simple) produisent du Rust. `pl2pl cobol --os <linux|macos|unix|windows>` crée un script de construction pour GnuCOBOL.
 
+## Nouveautés de la v0.2.1 (2026-11-20)
+- Si l'on choisit `rpoem` / `rporea` dans `pl2pl web --backend`, des avis s'affichent (japonais et anglais) : RPoem inclut déjà les fonctions compatibles Tauri et WunderGraph Cosmo, tokio et WASM, donc ne pas les choisir en plus ; HTML5 et CSS3 sont utilisés mais en petite quantité ; JavaScript, TypeScript, Node.js et REST ne sont pas utilisés par conception. Ce qu'on ajoute avec `--also` et qui est déjà inclus est refusé (code de sortie 2) ; ce qui est inclus mais pas encore mûr reste sélectionnable, avec une mise en garde.
+- `pl2pl maturity [--repo DIR] [--llm URL] [--apply]` juge cette maturité en lançant des tests-sondes (registre : `registry/maturity.toml`). L'avis de l'IA d'aruaru-llm ne change jamais seul le verdict.
+- Avec les piles autres que RPoem / RPoRea, `--also nodejs` (ou `next.js`) est accepté avec un avis : nous n'imposons pas notre règle « pas de Node.js », mais nous ne le recommandons pas. Des alternatives adaptées au langage choisi sont listées (RPoem / RPoRea + Reaxt, FastAPI + Jinja2, RS-Node.js, et d'autres que nous n'avons pas vérifiées).
+- Dépôts frères développés ensemble : Reaxt, RPoRea, RPoem, RMojo, open-cosmo, RS-TypeScript, RS-JavaScript, RS-Node.js et pl2pl. Quand l'un change, les autres sont vérifiés le jour même.
+- `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` et `webpage/info.html` expliquent les principes de conception de RPoRea / RPoem, avec avantages et inconvénients, en 11 langues.
+- Les originaux `COBOL_to` / `Java_to` sont conservés (non supprimés) ; les copies fusionnées dans `converters/` ont donné une sortie identique.
+
 ## En savoir plus
 [LANGUAGES.md](../../LANGUAGES.md) (liste des langages) / [COMBINATIONS.md](../../COMBINATIONS.md) (combinaisons) / [DESIGN.md](../../DESIGN.md) (la conception, écrite par le propriétaire) / [components/README.md](../../../components/README.md) (éléments fournis avec l'outil). Ces fichiers sont en japonais.

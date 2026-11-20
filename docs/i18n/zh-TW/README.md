@@ -56,5 +56,13 @@ pl2pl ir ./project --out ./out --format openapi
 - 自由搭配:`pl2pl web <dir> --backend <rust-axum|rust-poem|fastapi|mfastapi|rpoem|rporea> [--frontend bootstrap-ts|rust-wasm|none] [--db none|mysql|mariadb|postgres|sqlite] --out <dir>`。COBOL 會被改寫;C、C++、Fortran 維持原樣執行,由網頁呼叫。
 - `pl2pl c2rust`(簡單的 C 與 C++)和 `pl2pl f2rust`(簡單的 Fortran)可產生 Rust。`pl2pl cobol --os <linux|macos|unix|windows>` 產生 GnuCOBOL 的建置腳本。
 
+## v0.2.1 的新內容(2026-11-20)
+- 在 `pl2pl web --backend` 中選 `rpoem` / `rporea` 時會顯示提示(日文和英文):RPoem 已包含 Tauri 相容、WunderGraph Cosmo 相容、tokio 和 WASM,因此不要另選;HTML5 和 CSS3 會用,但盡量少;依設計不使用 JavaScript、TypeScript、Node.js 和 REST。用 `--also` 加入的東西若已被包含,會被拒絕(結束碼 2);已包含但相容尚未成熟的,仍可選擇,並附上提醒。
+- `pl2pl maturity [--repo DIR] [--llm URL] [--apply]` 透過執行探測測試來判斷成熟度(台帳:`registry/maturity.toml`)。aruaru-llm 的 AI 意見不會單獨改變判斷結果。
+- 在 RPoem / RPoRea 以外的組合中,`--also nodejs`(或 `next.js`)會被接受並附上提示:我們不強加「不用 Node.js」的方針,但不推薦。會列出適合所選語言的替代品(RPoem / RPoRea + Reaxt、FastAPI + Jinja2、RS-Node.js,以及我們尚未驗證的其他框架)。
+- 一起開發的姊妹倉庫:Reaxt、RPoRea、RPoem、RMojo、open-cosmo、RS-TypeScript、RS-JavaScript、RS-Node.js 和 pl2pl。一個有變動,當天檢查其他倉庫。
+- `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` 和 `webpage/info.html` 以 11 種語言說明 RPoRea / RPoem 的設計思想及其優缺點。
+- 原本的 `COBOL_to` / `Java_to` 保留(不刪除);`converters/` 中合併的副本輸出完全一致。
+
 ## 了解更多
 [LANGUAGES.md](../../LANGUAGES.md)(語言清單) / [COMBINATIONS.md](../../COMBINATIONS.md)(組合) / [DESIGN.md](../../DESIGN.md)(設計,由擁有者撰寫) / [components/README.md](../../../components/README.md)(附帶的元件)。這些檔案為日文。
