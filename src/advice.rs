@@ -114,7 +114,10 @@ pub fn node_alternatives(backend: &str) -> String {
     };
     let ja_other = "【他の言語では、このようなフレームワークもございます】Rust: Leptos・Dioxus・Yew(Rust から WASM)/ Python: htmx + Jinja2、NiceGUI / Go: templ + htmx / C#: Blazor(WASM)/ Elixir: Phoenix LiveView。いずれも Node.js を使わずに画面を作れる例ですが、当方では未検証です。";
     let en_other = "[Frameworks in other languages] Rust: Leptos, Dioxus, Yew (Rust to WASM) / Python: htmx with Jinja2, NiceGUI / Go: templ with htmx / C#: Blazor (WASM) / Elixir: Phoenix LiveView. These are examples that build a UI without Node.js, but we have not verified them.";
-    format!("{ja_own}\n{en_own}\n{ja_other}\n{en_other}")
+    // Node.js 互換が必要な場合の、Rust 製の実行環境(開発中。確認できた範囲は RS-Node.js の README に記載)
+    let ja_rn = "【Node.js 互換が必要な場合】RNode.js(RS-Node.js): Rust 製の Node.js 互換の実行環境で、JavaScript は Rust 製エンジン Boa、TypeScript は RS-TypeScript で動かします。本物の Node.js と出力を比べて互換を確かめながら開発中で、対応範囲はまだ限られます(console・process・require の path / fs など)。";
+    let en_rn = "[If you need Node.js compatibility] RNode.js (RS-Node.js): a Rust runtime aiming at Node.js compatibility; JavaScript runs on the Rust engine Boa and TypeScript through RS-TypeScript. It is under development and checked against real Node.js output, so its coverage is still limited (console, process, and require of path / fs, for now).";
+    format!("{ja_own}\n{en_own}\n{ja_rn}\n{en_rn}\n{ja_other}\n{en_other}")
 }
 
 /// `--also tauri,nodejs` のような追加の選択を調べる。戻り値: 断る理由(日本語と English)の一覧。空なら全部受け付け。
