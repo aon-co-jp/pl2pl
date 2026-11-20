@@ -93,7 +93,8 @@ pub fn backend_notice(backend: &str) -> Option<String> {
     Some(format!(
         "【{name} について / About {name}】\n\
          日本語: RPoem は Poem の Rust 版で、Tauri 互換・WunderGraph Cosmo 互換の機能と、tokio、WASM を含んでいます。ただし互換の完成度はまだ高くないため、Tauri や WunderGraph Cosmo を別に選ぶこともできます(その場合は注意を表示します)。画面は HTML5 と CSS3 を使いますが、使う量はなるべく少なくします。JavaScript・TypeScript・Node.js・REST API は、設計上、使いません。\n\
-         English: RPoem is the Rust edition of Poem. It already includes Tauri-compatible and WunderGraph Cosmo-compatible features, plus tokio and WASM, but that compatibility is not yet complete, so you may still choose Tauri or WunderGraph Cosmo separately (a caution is shown if you do). The UI uses HTML5 and CSS3, kept as small as possible. By design, JavaScript, TypeScript, Node.js and REST APIs are not used.\n"
+         English: RPoem is the Rust edition of Poem. It already includes Tauri-compatible and WunderGraph Cosmo-compatible features, plus tokio and WASM, but that compatibility is not yet complete, so you may still choose Tauri or WunderGraph Cosmo separately (a caution is shown if you do). The UI uses HTML5 and CSS3, kept as small as possible. By design, JavaScript, TypeScript, Node.js and REST APIs are not used.\n{}\n{}\n{}\n",
+        crate::info::hint("ui"), crate::info::hint("nojs"), crate::info::hint("connect")
     ))
 }
 
@@ -149,7 +150,7 @@ pub fn check_also(backend: &str, frontend: &str, also: &str) -> (Vec<String>, Ve
             out.push(format!("{l} は、設計上、使用しない仕様ですので、ご選択できません。/ {l} is not used by design, so it cannot be selected."));
         } else if matches!(c, "nodejs" | "nextjs") {
             // 方針を押し付けない: 選べる。ただし推薦はしない、と伝える
-            notes.push(format!("お知らせ: {l} を選択されました。私たちは「Node.js を使わない」方針を利用者に押し付けませんので、そのままお使いいただけますが、推薦はしておりません。/ Notice: you selected {l}. We do not impose our no-Node.js policy on you, so you may use it as you wish, but we do not recommend it.\n{}", node_alternatives(backend)));
+            notes.push(format!("お知らせ: {l} を選択されました。私たちは「Node.js を使わない」方針を利用者に押し付けませんので、そのままお使いいただけますが、推薦はしておりません。/ Notice: you selected {l}. We do not impose our no-Node.js policy on you, so you may use it as you wish, but we do not recommend it.\n{}\n{}", node_alternatives(backend), crate::info::hint("nojs")));
         }
     }
     (out, notes)

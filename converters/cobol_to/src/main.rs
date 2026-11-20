@@ -15,10 +15,10 @@ impl Target {
     const ALL: [Target; 4] = [Target::FastApi, Target::MFastApi, Target::RustPoem, Target::RPoem];
     fn label(self) -> &'static str {
         match self {
-            Target::FastApi => "最新Python + 最新FastAPI + Next.js/Node.js + HTML5/CSS3/TypeScript/Bootstrap",
-            Target::MFastApi => "最新Python + 最新MFastAPI + Next.js/Node.js + HTML5/CSS3/TypeScript/Bootstrap",
+            Target::FastApi => "最新Python + 最新FastAPI + HTML5/CSS3(Bootstrap・TypeScript・Node.js は任意で、推薦はしません)",
+            Target::MFastApi => "最新Python + 最新MFastAPI + HTML5/CSS3(Bootstrap・TypeScript・Node.js は任意で、推薦はしません)",
             Target::RustPoem => "最新Rust + 最新Poem",
-            Target::RPoem => "最新Rust + 最新RPoem (Bootstrap/TypeScript/Next.js/Node.js なし、Rust→WASM)",
+            Target::RPoem => "最新Rust + 最新RPoem (Rust→WASM。Bootstrap・TypeScript・Node.js は使わない設計。詳しくは pl2pl info nojs)",
         }
     }
     fn slug(self) -> &'static str {
@@ -79,7 +79,7 @@ fn scaffold(t: Target, out: &Path, mods: &[String]) {
         write(&out.join("app.py"), &format!(
             "{reg}\nPROGRAMS = {{\n{tbl}}}\n\n# Connect形式: POST /cobol_to.Program/Run  {{\"program\": \"名前\"}}\n# {fw} のアプリへ登録すること(下の run_program を呼ぶ)\ndef run_program(body: dict) -> dict:\n    f = PROGRAMS.get(body.get(\"program\"))\n    if f is None:\n        return {{\"code\": \"not_found\"}}\n    return {{\"output\": f()}}\n"));
         write(&out.join("requirements.txt"), &format!("{fw}\nuvicorn\n"));
-        write(&out.join("frontend/README.md"), "Next.js + TypeScript + Bootstrap の画面は `npx create-next-app@latest` で作成し、Connect(POST /cobol_to.Program/Run)を fetch で呼ぶ。\n");
+        write(&out.join("frontend/README.md"), "画面は HTML5/CSS3 で十分です(静的ファイルを FastAPI が配信)。Bootstrap・TypeScript・Node.js を使うかは自由ですが、推薦はしません。Connect(POST /cobol_to.Program/Run)を fetch で呼びます。\n");
     } else {
         write(&out.join("Cargo.toml"), "[package]\nname = \"cobol_to-out\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n# 最新版を入れる: cargo add tokio --features full ; cargo add poem (RPoem は F:\\RPoem を path 依存で追加)\n");
         write(&out.join("src/programs/mod.rs"), &mods.iter().map(|m| format!("pub mod {m};\n")).collect::<String>());

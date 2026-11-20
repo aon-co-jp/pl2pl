@@ -15,6 +15,7 @@ mod middleware;
 mod php;
 mod watch;
 mod advice;
+mod info;
 mod maturity;
 mod stack;
 mod web;
@@ -48,6 +49,8 @@ const USAGE: &str = "pl2pl — プラットフォーム/HPC 移植コンバー�
   pl2pl ir <dir> --out <dir> [--format json|openapi|fastapi]   (試作)共通の中間表現: PHP・Python・Java のルートを JSON / OpenAPI へ
   pl2pl maturity [--repo DIR] [--llm URL] [--apply]
                                               含んでいるが互換が未完成の物(Tauri・Cosmo 互換など)を試験で判定。完成なら『選べない』側へ(--apply で台帳に反映)
+  pl2pl info [ui|nojs|json|connect|shared] [--lang ja|en|zh-CN|zh-TW|ko|de|ru|fr|it|ar|fa] [--html]
+                                              設計思想(RPoem / RPoRea など)の説明とメリット・デメリットを11言語で表示(--html で画面用 HTML)
   pl2pl --version
 ";
 
@@ -105,6 +108,9 @@ fn main() {
             vc: arg(&a, "--vc").map(Into::into),
         };
         std::process::exit(watch::run(&o));
+    }
+    if cmd == "info" {
+        std::process::exit(info::run(&a));
     }
     if cmd == "maturity" {
         // 互換の完成度を試験で判定(open-cpu で並列数を決め、aruaru-llm の参考意見つき)。--apply で台帳へ反映
