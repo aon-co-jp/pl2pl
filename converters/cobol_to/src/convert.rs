@@ -68,6 +68,7 @@ pub enum Stmt {
     Close(String),
     Read(String, Option<String>, Vec<Stmt>, Vec<Stmt>), // ファイル, INTO, AT END, NOT AT END
     Write(String, Option<Expr>),              // レコード名, FROM
+    InspectScoped(String, Inspect, Option<Expr>, Option<Expr>), // INSPECT ... AFTER INITIAL a BEFORE INITIAL b
     SizeErr(Box<Stmt>, Vec<Stmt>, Vec<Stmt>), // 算術文, ON SIZE ERROR, NOT ON SIZE ERROR
     Stop,
     Nop,
@@ -1318,8 +1319,24 @@ impl P {
                         }
                         _ => return Err("INSPECT の形が未対応".into()),
                     };
-                    if !self.ended && matches!(self.word().as_str(), "BEFORE" | "AFTER") {
-                        return Err("BEFORE/AFTER INITIAL は未対応".into());
+                    let (mut after, mut before) = (None, None);
+                    while !self.ended && matches!(self.word().as_str(), "BEFORE" | "AFTER") {
+                        let is_after = self.word() == "AFTER";
+                        self.next();
+                        if self.word() == "INITIAL" {
+                            self.next();
+                        }
+                        let e = self.operand()?;
+                        if is_after {
+                            after = Some(e);
+                        } else {
+                            before = Some(e);
+                        }
+                    }
+                    if after.is_some() || before.is_some() {
+                        if let Stmt::Inspect(tg, op) = st {
+                            return Ok(Stmt::InspectScoped(tg, op, after, before));
+                        }
                     }
                     Ok(st)
                 })();
@@ -2469,6 +2486,56 @@ fn emit(p: &Program, ss: &[Stmt], l: Lang, ind: usize, o: &mut String) {
                     )),
                 }
             }
+            Stmt::InspectScoped(tg, op, after, before) => {
+                let t = format!("self.{}", canon(p, tg));
+                let s = |e: &Expr| sx(p, e, l).0;
+                if py {
+                    o.push_str(&format!("{pad}_t = str({t}); _s = 0; _e = len(_t)\n"));
+                    if let Some(a) = after {
+                        o.push_str(&format!("{pad}_a = str({}); _i = _t.find(_a); _s = _i + len(_a) if _i >= 0 else len(_t)\n", s(a)));
+                    }
+                    if let Some(b) = before {
+                        o.push_str(&format!("{pad}_j = _t.find(str({}), _s); _e = _j if _j >= 0 else len(_t)\n", s(b)));
+                    }
+                    o.push_str(&format!("{pad}_m = _t[_s:_e]\n"));
+                    match op {
+                        Inspect::Tally(c, pat) => o.push_str(&format!("{pad}self.{} += _m.count(str({}))\n", canon(p, c), s(pat))),
+                        Inspect::Replace { first, from, to } => {
+                            o.push_str(&format!("{pad}_m = _m.replace(str({}), str({}){})\n", s(from), s(to), if *first { ", 1" } else { "" }));
+                            o.push_str(&format!("{pad}{t} = _t[:_s] + _m + _t[_e:]\n"));
+                        }
+                        Inspect::Convert(a, b) => {
+                            o.push_str(&format!("{pad}_m = _m.translate(str.maketrans(str({}), str({})))\n", s(a), s(b)));
+                            o.push_str(&format!("{pad}{t} = _t[:_s] + _m + _t[_e:]\n"));
+                        }
+                    }
+                } else {
+                    o.push_str(&format!("{pad}{{\n{pad}    let t0 = format!(\"{{}}\", {t}); let mut s0 = 0usize; let mut e0 = t0.len();\n"));
+                    if let Some(a) = after {
+                        o.push_str(&format!("{pad}    let a0 = format!(\"{{}}\", {}); s0 = match t0.find(a0.as_str()) {{ Some(i) => i + a0.len(), None => t0.len() }};\n", s(a)));
+                    }
+                    if let Some(b) = before {
+                        o.push_str(&format!("{pad}    let b0 = format!(\"{{}}\", {}); e0 = match t0[s0..].find(b0.as_str()) {{ Some(i) => s0 + i, None => t0.len() }};\n", s(b)));
+                    }
+                    o.push_str(&format!("{pad}    let m0 = &t0[s0..e0];\n"));
+                    match op {
+                        Inspect::Tally(c, pat) => o.push_str(&format!("{pad}    self.{} += m0.matches(format!(\"{{}}\", {}).as_str()).count() as i64;\n", canon(p, c), s(pat))),
+                        Inspect::Replace { first, from, to } => o.push_str(&format!(
+                            "{pad}    let m1 = m0.{}(format!(\"{{}}\", {}).as_str(), format!(\"{{}}\", {}).as_str(){}); {t} = format!(\"{{}}{{}}{{}}\", &t0[..s0], m1, &t0[e0..]);\n",
+                            if *first { "replacen" } else { "replace" },
+                            s(from),
+                            s(to),
+                            if *first { ", 1" } else { "" }
+                        )),
+                        Inspect::Convert(a, b) => o.push_str(&format!(
+                            "{pad}    let a: Vec<char> = format!(\"{{}}\", {}).chars().collect(); let b: Vec<char> = format!(\"{{}}\", {}).chars().collect(); let m1: String = m0.chars().map(|c| match a.iter().position(|x| *x == c) {{ Some(i) => b.get(i).copied().unwrap_or(c), None => c }}).collect(); {t} = format!(\"{{}}{{}}{{}}\", &t0[..s0], m1, &t0[e0..]);\n",
+                            s(a),
+                            s(b)
+                        )),
+                    }
+                    o.push_str(&format!("{pad}}}\n"));
+                }
+            }
             Stmt::CallExt(name, args) => match l {
                 Lang::Py => o.push_str(&format!("{pad}self.call_ext({name:?}, [{}])\n", args.iter().map(|e| disp(p, e, l)).collect::<Vec<_>>().join(", "))),
                 Lang::Rs => o.push_str(&format!(
@@ -2865,6 +2932,14 @@ mod tests {
         assert!(py.contains("_fmt(self.t, 1)"), "{py}");
         let rs = to_rust(&p);
         assert!(rs.contains("rdiv("), "{rs}");
+    }
+    #[test]
+    fn inspect_before_after_scope() {
+        let src = "       PROGRAM-ID. I.\n       DATA DIVISION.\n       WORKING-STORAGE SECTION.\n       01 T PIC X(9) VALUE \"AXBXCXDXE\".\n       01 N PIC 99 VALUE 0.\n       PROCEDURE DIVISION.\n           INSPECT T REPLACING ALL \"X\" BY \"-\" AFTER INITIAL \"B\" BEFORE INITIAL \"D\".\n           STOP RUN.\n";
+        let p = parse(src, false);
+        assert!(p.stmts.iter().any(|s| matches!(s, Stmt::InspectScoped(..))), "{:?}", p.stmts);
+        assert!(to_python(&p).contains("_t.find(_a)"));
+        assert!(to_rust(&p).contains("t0.find(a0.as_str())"));
     }
     #[test]
     fn on_size_error_branches() {
