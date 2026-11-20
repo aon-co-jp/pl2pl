@@ -19,6 +19,8 @@ pub struct Ctx {
     pub body_var: Option<String>,
     pub servlet: bool,
     pub lambda_params: Vec<String>,
+    pub hoisted: Vec<String>, // ブロック本体のラムダを文の直前へ出した def(インデント0起点)
+    pub lam_n: usize,
     pub notes: Vec<String>,
     pub uses: HashSet<&'static str>, // `time` `uuid` `math` `re` `rt`
     pub in_static: bool,
@@ -176,6 +178,148 @@ impl<'a> Tr<'a> {
         self.t[st..self.i].to_vec()
     }
 
+    /// switch 文を if/elif/else へ。フォールスルー・途中の break・default の合流は変換せず false(呼び出し側が TODO にする)。
+    fn switch_stmt(&mut self, ind: usize, out: &mut Vec<String>, assign: Option<&str>) -> bool {
+        self.i += 1;
+        if !self.at("(") {
+            return false;
+        }
+        let head = self.balanced("(", ")");
+        if !self.at("{") {
+            return false;
+        }
+        let inner = self.balanced("{", "}");
+        // 節: (ラベル群, default か, 矢印形か, 本体)
+        let mut clauses: Vec<(Vec<Vec<Tok>>, bool, bool, Vec<Tok>)> = vec![];
+        let mut i = 0usize;
+        while i < inner.len() {
+            let is_default = inner[i].id("default");
+            if !(inner[i].id("case") || is_default) {
+                return false;
+            }
+            i += 1;
+            let mut label: Vec<Tok> = vec![];
+            let mut d = 0i32;
+            let mut arrow = false;
+            while i < inner.len() {
+                let t = &inner[i];
+                if t.is("(") || t.is("[") || t.is("{") {
+                    d += 1;
+                } else if t.is(")") || t.is("]") || t.is("}") {
+                    d -= 1;
+                } else if d == 0 && (t.is(":") || t.is("->")) {
+                    arrow = t.is("->");
+                    i += 1;
+                    break;
+                }
+                label.push(t.clone());
+                i += 1;
+            }
+            let labels = if is_default { vec![] } else { split_top(&label, ",") };
+            let st = i;
+            let mut d = 0i32;
+            while i < inner.len() {
+                let t = &inner[i];
+                if d == 0 && (t.id("case") || t.id("default")) {
+                    break;
+                }
+                if t.is("(") || t.is("[") || t.is("{") {
+                    d += 1;
+                } else if t.is(")") || t.is("]") || t.is("}") {
+                    d -= 1;
+                }
+                i += 1;
+            }
+            clauses.push((labels, is_default, arrow, inner[st..i].to_vec()));
+        }
+        if clauses.is_empty() || clauses.iter().any(|c| c.2 != clauses[0].2) {
+            return false;
+        }
+        let is_arrow = clauses[0].2;
+        if assign.is_some() && (!is_arrow || clauses.iter().any(|c| c.3.iter().any(|t| t.id("yield")))) {
+            return false;
+        }
+        // 古い形: 空の節は次の節と合流(case 1: case 2: ...)
+        let mut merged: Vec<(Vec<Vec<Tok>>, bool, Vec<Tok>)> = vec![];
+        let mut pend: Vec<Vec<Tok>> = vec![];
+        let mut pend_default = false;
+        let n = clauses.len();
+        for (k, (labels, is_def, arrow, mut body)) in clauses.into_iter().enumerate() {
+            pend.extend(labels);
+            pend_default |= is_def;
+            if body.is_empty() && !arrow && k + 1 < n {
+                continue;
+            }
+            if !arrow {
+                let ends_break = body.len() >= 2 && body[body.len() - 1].is(";") && body[body.len() - 2].id("break");
+                if ends_break {
+                    body.truncate(body.len() - 2);
+                } else {
+                    // break が無い節は、最後の節か、return/throw で終わるときだけ許す
+                    let exits = body.len() >= 2 && body[body.len() - 1].is(";") && body.iter().rev().skip(1).take(60).any(|t| t.id("return") || t.id("throw"));
+                    let tail_ok = k + 1 == n || (exits && !body.iter().any(|t| t.is("{") || t.id("if")));
+                    if !tail_ok {
+                        return false;
+                    }
+                }
+                if body.iter().any(|t| t.id("break")) {
+                    return false;
+                }
+            }
+            if pend_default && !pend.is_empty() {
+                return false;
+            }
+            merged.push((std::mem::take(&mut pend), pend_default, body));
+            pend_default = false;
+        }
+        if !pend.is_empty() || pend_default {
+            return false;
+        }
+        let v = format!("_sw{ind}");
+        let subj = self.sub_expr(&head).s;
+        let p = Self::pad(ind);
+        out.push(format!("{p}{v} = {subj}"));
+        let mut first = true;
+        let mut default_body: Option<Vec<Tok>> = None;
+        for (labels, is_def, body) in merged {
+            if is_def {
+                default_body = Some(body);
+                continue;
+            }
+            let ls: Vec<String> = labels.iter().map(|l| self.sub_expr(l).s).collect();
+            let cond = if ls.len() == 1 { format!("{v} == {}", ls[0]) } else { format!("{v} in ({})", ls.join(", ")) };
+            out.push(format!("{p}{} {cond}:", if first { "if" } else { "elif" }));
+            first = false;
+            self.switch_body(ind + 1, out, &body, assign);
+        }
+        if let Some(b) = default_body {
+            out.push(format!("{p}{}", if first { "if True:" } else { "else:" }));
+            self.switch_body(ind + 1, out, &b, assign);
+        }
+        true
+    }
+
+    fn switch_body(&mut self, ind: usize, out: &mut Vec<String>, body: &[Tok], assign: Option<&str>) {
+        let before = out.len();
+        if let Some(a) = assign {
+            if !body.first().is_some_and(|t| t.is("{") || t.id("throw")) {
+                let mut e: Vec<Tok> = body.to_vec();
+                if e.last().is_some_and(|t| t.is(";")) {
+                    e.pop();
+                }
+                let x = self.sub_expr(&e).s;
+                out.push(format!("{}{a}{x}", Self::pad(ind)));
+                return;
+            }
+        }
+        let toks: Vec<Tok> = if body.first().is_some_and(|t| t.is("{")) && body.last().is_some_and(|t| t.is("}")) { body[1..body.len() - 1].to_vec() } else { body.to_vec() };
+        let mut sub = Tr { t: &toks, i: 0, c: &mut *self.c };
+        sub.stmts(ind, out);
+        if out.len() == before {
+            out.push(format!("{}pass", Self::pad(ind)));
+        }
+    }
+
     fn body(&mut self, ind: usize, out: &mut Vec<String>) {
         let before = out.len();
         if self.at("{") {
@@ -191,6 +335,18 @@ impl<'a> Tr<'a> {
     }
 
     fn stmt(&mut self, ind: usize, out: &mut Vec<String>) {
+        let start = out.len();
+        let mark = self.c.hoisted.len();
+        self.stmt_inner(ind, out);
+        if self.c.hoisted.len() > mark {
+            let pad = Self::pad(ind);
+            let defs: Vec<String> = self.c.hoisted.drain(mark..).map(|l| format!("{pad}{l}")).collect();
+            let at = start.min(out.len());
+            out.splice(at..at, defs);
+        }
+    }
+
+    fn stmt_inner(&mut self, ind: usize, out: &mut Vec<String>) {
         let p = Self::pad(ind);
         let Some(tok) = self.peek().cloned() else { return };
         match &tok {
@@ -244,6 +400,19 @@ impl<'a> Tr<'a> {
                 }
             }
             Tok::Id(k) if k == "for" => self.for_stmt(ind, out),
+            Tok::Id(k) if k == "return" && self.peek_n(1).is_some_and(|t| t.id("switch")) => {
+                let st = self.i;
+                let mark = out.len();
+                self.i += 1;
+                if self.switch_stmt(ind, out, Some("return ")) {
+                    self.eat(";");
+                } else {
+                    out.truncate(mark);
+                    self.i = st;
+                    let toks = self.skip_stmt();
+                    self.todo(ind, out, "switch 式", &toks);
+                }
+            }
             Tok::Id(k) if k == "return" => {
                 self.i += 1;
                 if self.eat(";") {
@@ -278,11 +447,39 @@ impl<'a> Tr<'a> {
                 self.body(ind, out);
             }
             Tok::Id(k) if k == "switch" => {
-                let toks = self.skip_stmt();
-                self.todo(ind, out, "switch 文", &toks);
+                let st = self.i;
+                let mark = out.len();
+                if !self.switch_stmt(ind, out, None) {
+                    out.truncate(mark);
+                    self.i = st;
+                    let toks = self.skip_stmt();
+                    self.todo(ind, out, "switch 文", &toks);
+                }
             }
             Tok::Id(k) if k == "assert" => {
                 let _ = self.skip_stmt();
+            }
+            _ if self.switch_assign_at() => {
+                let st = self.i;
+                let mark = out.len();
+                let mut j = self.i;
+                while !self.t[j].is("=") {
+                    j += 1;
+                }
+                let lhs: Vec<Tok> = self.t[self.i..j].to_vec();
+                let target = match lhs.last() {
+                    Some(t) if lhs.len() == 1 || matches!(t, Tok::Id(_)) && lhs.len() > 1 && !lhs.iter().any(|x| x.is(".") || x.is("[")) => self.sub_expr(&[t.clone()]).s,
+                    _ => self.sub_expr(&lhs).s,
+                };
+                self.i = j + 1;
+                if self.switch_stmt(ind, out, Some(&format!("{target} = "))) {
+                    self.eat(";");
+                } else {
+                    out.truncate(mark);
+                    self.i = st;
+                    let toks = self.skip_stmt();
+                    self.todo(ind, out, "switch 式", &toks);
+                }
             }
             _ => {
                 if self.looks_like_decl() {
@@ -375,6 +572,25 @@ impl<'a> Tr<'a> {
     }
 
     /// `Type name =` / `Type name;` / `final var x =` の判定(先読みのみ、位置は戻す)。
+    /// `x = switch ...` / `Type x = switch ...` の文頭か。
+    fn switch_assign_at(&self) -> bool {
+        let mut j = self.i;
+        let mut d = 0i32;
+        while let Some(t) = self.t.get(j) {
+            if t.is("(") || t.is("[") || t.is("{") {
+                d += 1;
+            } else if t.is(")") || t.is("]") || t.is("}") {
+                d -= 1;
+            } else if d == 0 && t.is(";") {
+                return false;
+            } else if d == 0 && t.is("=") {
+                return self.t.get(j + 1).is_some_and(|n| n.id("switch")) && j > self.i;
+            }
+            j += 1;
+        }
+        false
+    }
+
     fn looks_like_decl(&mut self) -> bool {
         let save = self.i;
         let ok = (|| {
@@ -934,8 +1150,21 @@ impl<'a> Tr<'a> {
             if inner.first().is_some_and(|t| t.id("return")) && inner.iter().filter(|t| t.is(";")).count() == 1 {
                 e(format!("lambda {}: {}", params.iter().map(|x| snake(x)).collect::<Vec<_>>().join(", "), self.sub_expr(&inner[1..inner.len() - 1]).s), "")
             } else {
-                self.c.notes.push("ブロック本体のラムダは未対応".into());
-                e("None", "")
+                // 複数の文を持つブロック本体: 直前に `def _lamN(...)` として出し、その名前を返す
+                self.c.lam_n += 1;
+                let name = format!("_lam{}", self.c.lam_n);
+                let mut lines: Vec<String> = vec![];
+                {
+                    let mut sub = Tr { t: &inner, i: 0, c: &mut *self.c };
+                    sub.stmts(1, &mut lines);
+                }
+                if lines.is_empty() {
+                    lines.push("    pass".into());
+                }
+                let mut def = vec![format!("def {name}({}):", params.iter().map(|x| snake(x)).collect::<Vec<_>>().join(", "))];
+                def.extend(lines);
+                self.c.hoisted.extend(def);
+                e(name, "")
             }
         } else {
             let b = self.expr(2);
@@ -996,6 +1225,10 @@ impl<'a> Tr<'a> {
             }
         }
         x
+    }
+
+    fn user_method(&self, name: &str) -> bool {
+        self.c.methods.contains(name) || self.c.svc_methods.contains(name)
     }
 
     fn method_call(&mut self, recv: E, name: &str, args: Vec<E>) -> E {
@@ -1093,8 +1326,31 @@ impl<'a> Tr<'a> {
             ("incrementAndGet", 0) | ("getAndIncrement", 0) => {
                 e(format!("{r}.increment_and_get()"), "int")
             }
-            ("stream", 0) | ("map", 1) | ("filter", 1) | ("collect", 1) | ("forEach", 1) | ("sorted", _) | ("reduce", _) | ("mapToInt", 1) => {
-                self.c.notes.push(format!("Stream API(.{name}) は未対応"));
+            // ---- Stream API(中間結果は list として即時に評価する) ----
+            ("stream", 0) | ("boxed", 0) | ("toList", 0) if !self.user_method(name) && r != "Collectors" => e(format!("list({r})"), ""),
+            ("map", 1) | ("mapToInt", 1) | ("mapToLong", 1) | ("mapToDouble", 1) | ("mapToObj", 1) if !self.user_method(name) => e(format!("list(map({}, {r}))", a[0]), ""),
+            ("filter", 1) if !self.user_method(name) => e(format!("list(filter({}, {r}))", a[0]), ""),
+            ("forEach", 1) if !self.user_method(name) => e(format!("list(map({}, {r}))", a[0]), ""),
+            ("anyMatch", 1) if !self.user_method(name) => e(format!("any(map({}, {r}))", a[0]), "boolean"),
+            ("allMatch", 1) if !self.user_method(name) => e(format!("all(map({}, {r}))", a[0]), "boolean"),
+            ("noneMatch", 1) if !self.user_method(name) => e(format!("(not any(map({}, {r})))", a[0]), "boolean"),
+            ("distinct", 0) if !self.user_method(name) => e(format!("list(dict.fromkeys({r}))"), ""),
+            ("limit", 1) if !self.user_method(name) => e(format!("list({r})[:{}]", a[0]), ""),
+            ("skip", 1) if !self.user_method(name) => e(format!("list({r})[{}:]", a[0]), ""),
+            ("sorted", 0) if !self.user_method(name) => e(format!("sorted({r})"), ""),
+            ("sum", 0) if !self.user_method(name) => e(format!("sum({r})"), "int"),
+            ("count", 0) if !self.user_method(name) => e(format!("len(list({r}))"), "long"),
+            ("findFirst", 0) | ("findAny", 0) if !self.user_method(name) => e(format!("next(iter({r}), None)"), ""),
+            ("reduce", 2) if !self.user_method(name) => e(format!("__import__(\"functools\").reduce({}, {r}, {})", a[1], a[0]), ""),
+            ("collect", 1) if !self.user_method(name) && a[0].starts_with("Collectors.to_list(") => e(format!("list({r})"), ""),
+            ("collect", 1) if !self.user_method(name) && a[0].starts_with("Collectors.to_set(") => e(format!("set({r})"), ""),
+            ("collect", 1) if !self.user_method(name) && a[0].starts_with("Collectors.joining(") => {
+                let sep = a[0].trim_start_matches("Collectors.joining(").trim_end_matches(')').to_string();
+                let sep = if sep.is_empty() { "\"\"".to_string() } else { sep };
+                e(format!("{sep}.join(map(str, {r}))"), "String")
+            }
+            ("sorted", _) | ("reduce", _) | ("collect", 1) | ("stream", 0) => {
+                self.c.notes.push(format!("Stream API(.{name}) のこの形は未対応"));
                 e(format!("{r}.{}({})", snake(name), a.join(", ")), "")
             }
             _ => {
@@ -1417,6 +1673,17 @@ mod tests {
     }
 
     #[test]
+    fn block_lambda_and_stream() {
+        let p = tb("List<Integer> xs = new ArrayList<>(); List<Integer> ys = xs.stream().filter(x -> x > 1).map(x -> { int d = x * 2; if (d > 10) { return 10; } return d; }).collect(Collectors.toList()); int total = xs.stream().mapToInt(x -> x).sum(); String s = xs.stream().map(x -> String.valueOf(x)).collect(Collectors.joining(\", \"));");
+        assert!(p.contains("def _lam1(x):"), "{p}");
+        assert!(p.contains("d = x * 2"), "{p}");
+        assert!(p.contains("list(filter(lambda x: x > 1"), "{p}");
+        assert!(p.contains("list(map(_lam1"), "{p}");
+        assert!(p.contains("sum(list(map(lambda x: x"), "{p}");
+        assert!(p.contains(".join(map(str,"), "{p}");
+        assert!(p.find("def _lam1").unwrap() < p.find("ys =").unwrap(), "{p}");
+    }
+    #[test]
     fn if_for_return() {
         let p = tb("int total = 0; for (int i = 0; i < n; i++) { total += i; } if (total > 10 && flag) { return \"big\"; } else { return \"small\" + total; }");
         assert!(p.contains("total = 0"), "{p}");
@@ -1441,8 +1708,28 @@ mod tests {
     }
     #[test]
     fn unsupported_is_loud() {
-        let p = tb("switch (x) { case 1: break; }");
+        let p = tb("switch (x) { case 1: y = 1; case 2: y = 2; break; }");
         assert!(p.contains("TODO(Java_to)"), "{p}");
+    }
+    #[test]
+    fn switch_classic_and_arrow() {
+        let p = tb("switch (op) { case 1: case 2: r = 1; break; case 3: return \"x\"; default: r = 0; }");
+        assert!(p.contains("_sw1 = op"), "{p}");
+        assert!(p.contains("if _sw1 in (1, 2):"), "{p}");
+        assert!(p.contains("elif _sw1 == 3:"), "{p}");
+        assert!(p.contains("else:"), "{p}");
+        let q = tb("switch (op) { case 1, 2 -> r = 1; case 3 -> { r = 2; } default -> r = 0; }");
+        assert!(q.contains("if _sw1 in (1, 2):"), "{q}");
+        assert!(q.contains("elif _sw1 == 3:"), "{q}");
+    }
+    #[test]
+    fn switch_expression() {
+        let p = tb("String s = switch (n) { case 1, 2 -> \"low\"; case 3 -> \"mid\"; default -> \"hi\"; };");
+        assert!(p.contains("s = \"low\""), "{p}");
+        assert!(p.contains("s = \"hi\""), "{p}");
+        let q = tb("return switch (n) { case 1 -> \"a\"; default -> \"b\"; };");
+        assert!(q.contains("return \"a\""), "{q}");
+        assert!(q.contains("else:"), "{q}");
     }
     #[test]
     fn integer_division_and_cast() {
