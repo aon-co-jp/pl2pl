@@ -68,6 +68,7 @@ pub enum Stmt {
     Close(String),
     Read(String, Option<String>, Vec<Stmt>, Vec<Stmt>), // ファイル, INTO, AT END, NOT AT END
     Write(String, Option<Expr>),              // レコード名, FROM
+    SizeErr(Box<Stmt>, Vec<Stmt>, Vec<Stmt>), // 算術文, ON SIZE ERROR, NOT ON SIZE ERROR
     Stop,
     Nop,
     Todo(String),
@@ -284,6 +285,11 @@ impl P {
     }
     fn word(&self) -> String {
         self.up(0)
+    }
+    /// 次が [NOT] [ON] SIZE ERROR の節の頭か(文の中身の読み取りをここで止める)
+    fn at_size_clause(&self) -> bool {
+        let w = self.up(0);
+        (w == "ON" && self.up(1) == "SIZE") || (w == "NOT" && (self.up(1) == "SIZE" || (self.up(1) == "ON" && self.up(2) == "SIZE")))
     }
 
     // ---- 式 ----
@@ -535,7 +541,7 @@ impl P {
         let mut v: Vec<String> = vec![];
         while let Some(t) = self.peek() {
             let u = t.s.to_uppercase();
-            if is_starter(&u) || stops.contains(&u.as_str()) || t.s == ")" {
+            if is_starter(&u) || stops.contains(&u.as_str()) || t.s == ")" || self.at_size_clause() {
                 break;
             }
             let (s, d) = (t.s.clone(), t.dot);
@@ -587,7 +593,7 @@ impl P {
         loop {
             let Some(t) = self.peek() else { break };
             let u = t.s.to_uppercase();
-            if is_starter(&u) || stops.contains(&u.as_str()) || self.ended && !v.is_empty() {
+            if is_starter(&u) || stops.contains(&u.as_str()) || self.ended && !v.is_empty() || self.at_size_clause() {
                 break;
             }
             if self.ended && v.is_empty() {
@@ -706,16 +712,16 @@ impl P {
             "ADD" => {
                 self.next();
                 let r: Result<Stmt, String> = (|| {
-                    let ops = self.operands_until(&["TO", "GIVING"])?;
+                    let ops = self.operands_until(&["TO", "GIVING", "ON", "NOT", "SIZE"])?;
                     let mut to = vec![];
                     let mut giving = vec![];
                     if self.word() == "TO" {
                         self.next();
-                        to = self.operands_until(&["GIVING"])?;
+                        to = self.operands_until(&["GIVING", "ON", "NOT", "SIZE"])?;
                     }
                     if self.word() == "GIVING" {
                         self.next();
-                        giving = self.names_until(&[]);
+                        giving = self.names_until(&["ON", "NOT", "SIZE"]);
                     }
                     if giving.is_empty() {
                         let total = Self::sum(ops);
@@ -747,7 +753,7 @@ impl P {
                     let sum = Self::sum(ops);
                     if self.word() == "GIVING" {
                         self.next();
-                        let g = self.names_until(&[]);
+                        let g = self.names_until(&["ON", "NOT", "SIZE"]);
                         return Ok(Stmt::Assign(g.into_iter().next().ok_or("GIVING 先が無い")?, Expr::Bin('-', Box::new(from), Box::new(sum))));
                     }
                     match self.lv_of(from) {
@@ -768,7 +774,7 @@ impl P {
                     let b = self.operand()?;
                     if self.word() == "GIVING" {
                         self.next();
-                        let g = self.names_until(&[]);
+                        let g = self.names_until(&["ON", "NOT", "SIZE"]);
                         return Ok(Stmt::Assign(g.into_iter().next().ok_or("GIVING 先が無い")?, Expr::Bin('*', Box::new(a), Box::new(b))));
                     }
                     match self.lv_of(b) {
@@ -790,13 +796,13 @@ impl P {
                     let b = self.operand()?;
                     if self.word() == "GIVING" {
                         self.next();
-                        let g = self.names_until(&["REMAINDER"]);
+                        let g = self.names_until(&["REMAINDER", "ON", "NOT", "SIZE"]);
                         let q = g.into_iter().next().ok_or("GIVING 先が無い")?;
                         let (dividend, divisor) = if by { (a, b) } else { (b, a) };
                         let e = Expr::Bin('/', Box::new(dividend.clone()), Box::new(divisor.clone()));
                         if self.word() == "REMAINDER" {
                             self.next();
-                            let r = self.names_until(&[]).into_iter().next().ok_or("REMAINDER 先が無い")?;
+                            let r = self.names_until(&["ON", "NOT", "SIZE"]).into_iter().next().ok_or("REMAINDER 先が無い")?;
                             let qv = Expr::Var(q.split(['\0', '\u{1}']).next().unwrap_or("").to_string());
                             let rem = Expr::Bin('-', Box::new(dividend), Box::new(Expr::Bin('*', Box::new(qv), Box::new(divisor))));
                             return Ok(Stmt::If(Cond::Cmp("==".into(), Expr::Num("1".into()), Expr::Num("1".into())), vec![Stmt::Assign(q, e), Stmt::Assign(r, rem)], vec![]));
@@ -1515,7 +1521,46 @@ impl P {
                 Stmt::Todo(format!("未知の語 {}", t.s))
             }
         };
+        let st = if matches!(u.as_str(), "ADD" | "SUBTRACT" | "MULTIPLY" | "DIVIDE" | "COMPUTE") && !matches!(st, Stmt::Todo(_)) { self.size_wrap(st, &u) } else { st };
         Some(st)
+    }
+
+    /// 算術文の後ろの [ON] SIZE ERROR ... [NOT [ON] SIZE ERROR ...] [END-xxx] を読み、SizeErr に包む
+    fn size_wrap(&mut self, s: Stmt, verb: &str) -> Stmt {
+        if self.ended {
+            return s;
+        }
+        let on_size = |p: &P, k: usize| p.up(k) == "SIZE" || (p.up(k) == "ON" && p.up(k + 1) == "SIZE");
+        let has_err = on_size(self, 0);
+        let has_not = self.up(0) == "NOT" && on_size(self, 1);
+        if !has_err && !has_not {
+            return s;
+        }
+        let end = format!("END-{verb}");
+        let terms: [&str; 2] = ["NOT", end.as_str()];
+        let eat_size = |p: &mut P| {
+            if p.word() == "ON" {
+                p.next();
+            }
+            p.next(); // SIZE
+            if p.word() == "ERROR" {
+                p.next();
+            }
+        };
+        let (mut err, mut ok) = (vec![], vec![]);
+        if has_err {
+            eat_size(self);
+            err = self.block(true, &terms);
+        }
+        if self.up(0) == "NOT" && !self.ended {
+            self.next();
+            eat_size(self);
+            ok = self.block(true, &terms);
+        }
+        if self.word() == end && !self.ended {
+            self.next();
+        }
+        Stmt::SizeErr(Box::new(s), err, ok)
     }
 }
 
@@ -2156,6 +2201,88 @@ fn semi(l: Lang) -> &'static str {
     }
 }
 
+/// 式の中の割り算の除数コードを集める(0除算の検出用)
+fn divisors(p: &Program, e: &Expr, l: Lang, out: &mut Vec<String>) {
+    match e {
+        Expr::Bin(op, a, b) => {
+            divisors(p, a, l, out);
+            divisors(p, b, l, out);
+            if *op == '/' {
+                out.push(sx(p, b, l).0);
+            }
+        }
+        Expr::Neg(x) => divisors(p, x, l, out),
+        _ => {}
+    }
+}
+
+/// ON SIZE ERROR: 結果が代入先の桁数を超える(または0で割る)ときは代入せず、エラー側の文を実行する
+fn size_emit(p: &Program, inner: &Stmt, err: &[Stmt], ok: &[Stmt], l: Lang, ind: usize, o: &mut String) {
+    let pad = "    ".repeat(ind);
+    let py = l == Lang::Py;
+    let (t, e, kind) = match inner {
+        Stmt::Assign(t, e) => (t, e, 0),
+        Stmt::AddTo(t, e) => (t, e, 1),
+        Stmt::SubFrom(t, e) => (t, e, 2),
+        Stmt::MulBy(t, e) => (t, e, 3),
+        other => {
+            // 複数の対象を持つ形などは、あふれの判定をせず元の文だけを出し、見えるように残す
+            emit(p, std::slice::from_ref(other), l, ind, o);
+            emit(p, &[Stmt::Todo("ON SIZE ERROR(複数の対象は未対応)".into())], l, ind, o);
+            return;
+        }
+    };
+    let (b, _, rounded) = split_lv(t);
+    let tg = lv(p, t, l);
+    let value = match kind {
+        0 => val_for(p, t, e, l),
+        1 => format!("{tg} + {}", val_for(p, t, e, l)),
+        2 => format!("{tg} - {}", val_for(p, t, e, l)),
+        _ => {
+            let (c, sc) = sx(p, e, l);
+            let ts = scale_of(p, &b);
+            if ts == 0 && sc == 0 {
+                format!("{tg} * {c}")
+            } else {
+                rescale(&format!("({tg} * {c})"), ts + sc, ts, rounded, l)
+            }
+        }
+    };
+    let width = var_of(p, &b).filter(|v| v.numeric && v.width > 0 && v.width <= 18).map(|v| v.width);
+    let mut divs = vec![];
+    divisors(p, e, l, &mut divs);
+    let zero = divs.iter().map(|d| format!("{d} == 0")).collect::<Vec<_>>().join(if py { " or " } else { " || " });
+    let over = |v: &str| match width {
+        Some(w) => if py { format!("abs({v}) >= 10 ** {w}") } else { format!("{v}.abs() >= 10i64.pow({w})") },
+        None => if py { "False".to_string() } else { "false".to_string() },
+    };
+    if py {
+        o.push_str(&format!("{pad}_sv = 0\n"));
+        if zero.is_empty() {
+            o.push_str(&format!("{pad}_sv = {value}\n{pad}_se = {}\n", over("_sv")));
+        } else {
+            o.push_str(&format!("{pad}if {zero}:\n{pad}    _se = True\n{pad}else:\n{pad}    _sv = {value}\n{pad}    _se = {}\n", over("_sv")));
+        }
+        o.push_str(&format!("{pad}if _se:\n"));
+        emit(p, err, l, ind + 1, o);
+        o.push_str(&format!("{pad}else:\n{pad}    {tg} = _sv\n"));
+        emit(p, ok, l, ind + 1, o);
+    } else {
+        o.push_str(&format!("{pad}let mut size_v: i64 = 0;\n"));
+        let inner_calc = format!("{{ size_v = {value}; {} }}", over("size_v"));
+        if zero.is_empty() {
+            o.push_str(&format!("{pad}let size_e: bool = {inner_calc};\n"));
+        } else {
+            o.push_str(&format!("{pad}let size_e: bool = if {zero} {{ true }} else {inner_calc};\n"));
+        }
+        o.push_str(&format!("{pad}if size_e {{\n"));
+        emit(p, err, l, ind + 1, o);
+        o.push_str(&format!("{pad}}} else {{\n{pad}    {tg} = size_v;\n"));
+        emit(p, ok, l, ind + 1, o);
+        o.push_str(&format!("{pad}}}\n"));
+    }
+}
+
 fn emit(p: &Program, ss: &[Stmt], l: Lang, ind: usize, o: &mut String) {
     let pad = "    ".repeat(ind);
     if ss.is_empty() {
@@ -2396,6 +2523,7 @@ fn emit(p: &Program, ss: &[Stmt], l: Lang, ind: usize, o: &mut String) {
                     Lang::Rs => o.push_str(&format!("{pad}self.wr_{f}();\n")),
                 }
             }
+            Stmt::SizeErr(inner, err, ok) => size_emit(p, inner, err, ok, l, ind, o),
             Stmt::Stop => o.push_str(&match l {
                 Lang::Py => format!("{pad}return 1\n"),
                 Lang::Rs => format!("{pad}return 1;\n"),
@@ -2737,6 +2865,18 @@ mod tests {
         assert!(py.contains("_fmt(self.t, 1)"), "{py}");
         let rs = to_rust(&p);
         assert!(rs.contains("rdiv("), "{rs}");
+    }
+    #[test]
+    fn on_size_error_branches() {
+        let src = "       PROGRAM-ID. S.\n       DATA DIVISION.\n       WORKING-STORAGE SECTION.\n       01 A PIC 99 VALUE 90.\n       01 B PIC 99 VALUE 0.\n       PROCEDURE DIVISION.\n           ADD 20 TO A\n               ON SIZE ERROR DISPLAY \"OVER\"\n               NOT ON SIZE ERROR DISPLAY \"OK\"\n           END-ADD.\n           DIVIDE 10 BY B GIVING A\n               ON SIZE ERROR DISPLAY \"ZERO\"\n           END-DIVIDE.\n           DISPLAY A.\n           STOP RUN.\n";
+        let p = parse(src, false);
+        assert!(!p.stmts.iter().any(|s| matches!(s, Stmt::Todo(_))), "{:?}", p.stmts);
+        assert_eq!(p.stmts.iter().filter(|s| matches!(s, Stmt::SizeErr(..))).count(), 2, "{:?}", p.stmts);
+        let py = to_python(&p);
+        assert!(py.contains("abs(_sv) >= 10 ** 2"), "{py}");
+        assert!(py.contains("self.b == 0"), "{py}");
+        let rs = to_rust(&p);
+        assert!(rs.contains("size_v.abs() >= 10i64.pow(2)"), "{rs}");
     }
     #[test]
     fn occurs_goto_88_redefines_string() {
