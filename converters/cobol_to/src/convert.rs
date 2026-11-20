@@ -48,6 +48,7 @@ pub enum Stmt {
     Display(Vec<Expr>),
     DisplayNoNl(Vec<Expr>),
     Accept(String),
+    AcceptSys(String, String),
     Move(Expr, Vec<String>),
     Assign(String, Expr),      // x = e
     AddTo(String, Expr),       // x += e
@@ -1148,8 +1149,24 @@ impl P {
                 self.next();
                 let tg = self.names_until(&["FROM"]);
                 if !self.ended && self.word() == "FROM" {
-                    self.skip_to_end(&[]);
-                    Stmt::Todo("ACCEPT FROM DATE/TIME 等は未対応".into())
+                    self.next();
+                    let kind = if self.ended { String::new() } else { self.word() };
+                    let ok = matches!(kind.as_str(), "DATE" | "DAY" | "TIME" | "DAY-OF-WEEK");
+                    if ok && !tg.is_empty() {
+                        self.next();
+                        let mut k = kind.clone();
+                        if !self.ended && self.word() == "YYYYMMDD" && kind == "DATE" {
+                            k = "DATE8".into();
+                            self.next();
+                        } else if !self.ended && self.word() == "YYYYDDD" && kind == "DAY" {
+                            k = "DAY7".into();
+                            self.next();
+                        }
+                        Stmt::AcceptSys(tg.into_iter().next().unwrap(), k)
+                    } else {
+                        self.skip_to_end(&[]);
+                        Stmt::Todo("ACCEPT FROM(DATE/DAY/TIME/DAY-OF-WEEK 以外)は未対応".into())
+                    }
                 } else if let Some(t) = tg.into_iter().next() {
                     Stmt::Accept(t)
                 } else {
@@ -2161,6 +2178,11 @@ fn emit(p: &Program, ss: &[Stmt], l: Lang, ind: usize, o: &mut String) {
                 let src = if py { "_accept()".to_string() } else { "read_line()".to_string() };
                 o.push_str(&format!("{pad}{tg} = {}{}\n", str_for(p, t, src, l), semi(l)));
             }
+            Stmt::AcceptSys(t, kind) => {
+                let tg = lv(p, t, l);
+                let src = if py { format!("_sys({kind:?})") } else { format!("sys_val({kind:?})") };
+                o.push_str(&format!("{pad}{tg} = {}{}\n", str_for(p, t, src, l), semi(l)));
+            }
             Stmt::Move(src, tg) => {
                 for t in tg {
                     o.push_str(&format!("{pad}{} = {}{}\n", lv(p, t, l), val_for(p, t, src, l), semi(l)));
@@ -2426,6 +2448,7 @@ pub fn to_python(p: &Program) -> String {
     o += "def _fmt(v, s):\n    d = str(abs(v)).rjust(s + 1, \"0\")\n    return (\"-\" if v < 0 else \"\") + d[:-s] + \".\" + d[-s:]\n\n\n";
     o += "def _num(x):\n    try:\n        return int(str(x).strip())\n    except ValueError:\n        return 0\n\n\n";
     o += "def _accept():\n    try:\n        return input()\n    except EOFError:\n        return \"\"\n\n\n";
+    o += "def _sys(kind):\n    import datetime as _d\n    n = _d.datetime.now(_d.timezone.utc)\n    if kind == 'DATE':\n        return n.strftime('%y%m%d')\n    if kind == 'DATE8':\n        return n.strftime('%Y%m%d')\n    if kind == 'DAY':\n        return n.strftime('%y%j')\n    if kind == 'DAY7':\n        return n.strftime('%Y%j')\n    if kind == 'DAY-OF-WEEK':\n        return str(n.isoweekday())\n    return n.strftime('%H%M%S') + '%02d' % (n.microsecond // 10000)\n\n\n";
     o += "def _upto(s, d):\n    return s.split(d)[0] if d else s\n\n\n";
     if !p.files.is_empty() {
         o += "_FILES = {\n";
@@ -2479,6 +2502,7 @@ pub fn to_rust(p: &Program) -> String {
     o += "fn pad_num(v: i64, w: usize) -> String {\n    if v < 0 { format!(\"-{:0>w$}\", -v, w = w.saturating_sub(1)) } else { format!(\"{:0>w$}\", v, w = w) }\n}\n\n";
     o += "fn pad_str(s: &str, w: usize) -> String {\n    let t: String = s.chars().take(w).collect();\n    format!(\"{:<w$}\", t, w = w)\n}\n\n";
     o += "fn upto(s: &str, d: &str) -> String {\n    if d.is_empty() { s.to_string() } else { s.split(d).next().unwrap_or(\"\").to_string() }\n}\n\n";
+    o += "fn sys_val(kind: &str) -> String {\n    let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();\n    let secs = d.as_secs() as i64;\n    let days = secs.div_euclid(86400);\n    let rem = secs.rem_euclid(86400);\n    let z = days + 719468;\n    let era = z.div_euclid(146097);\n    let doe = z.rem_euclid(146097);\n    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;\n    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);\n    let mp = (5 * doy + 2) / 153;\n    let dd = doy - (153 * mp + 2) / 5 + 1;\n    let mm = if mp < 10 { mp + 3 } else { mp - 9 };\n    let yy = yoe + era * 400 + if mm <= 2 { 1 } else { 0 };\n    let leap = (yy % 4 == 0 && yy % 100 != 0) || yy % 400 == 0;\n    let cum = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];\n    let yday = cum[(mm - 1) as usize] + dd + if leap && mm > 2 { 1 } else { 0 };\n    match kind {\n        \"DATE\" => format!(\"{:02}{:02}{:02}\", yy % 100, mm, dd),\n        \"DATE8\" => format!(\"{:04}{:02}{:02}\", yy, mm, dd),\n        \"DAY\" => format!(\"{:02}{:03}\", yy % 100, yday),\n        \"DAY7\" => format!(\"{:04}{:03}\", yy, yday),\n        \"DAY-OF-WEEK\" => format!(\"{}\", (days + 3).rem_euclid(7) + 1),\n        _ => format!(\"{:02}{:02}{:02}{:02}\", rem / 3600, rem % 3600 / 60, rem % 60, d.subsec_millis() / 10),\n    }\n}\n\n";
     o += "fn read_line() -> String {\n    let mut s = String::new();\n    let _ = std::io::stdin().read_line(&mut s);\n    s.trim_end_matches(['\\r', '\\n']).to_string()\n}\n\n";
     o += "pub struct State {\n    out: String,\n    goto: String,\n    ext: Option<Ext>,\n";
     for v in &p.vars {
@@ -2648,6 +2672,29 @@ mod tests {
         let rs = to_rust(&p);
         assert!(rs.contains("while !(self.i > 5) {"), "{rs}");
         assert!(rs.contains("fn p_show(&mut self) -> u8"), "{rs}");
+    }
+    #[test]
+    fn accept_from_date_time() {
+        let src = "       PROGRAM-ID. D.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 D8 PIC 9(8).
+       01 TM PIC 9(8).
+       01 DW PIC 9.
+       PROCEDURE DIVISION.
+           ACCEPT D8 FROM DATE YYYYMMDD.
+           ACCEPT TM FROM TIME.
+           ACCEPT DW FROM DAY-OF-WEEK.
+           STOP RUN.
+";
+        let p = parse(src, false);
+        let py = to_python(&p);
+        assert!(py.contains("_sys(\"DATE8\")"), "{py}");
+        assert!(py.contains("_sys(\"TIME\")"), "{py}");
+        assert!(py.contains("_sys(\"DAY-OF-WEEK\")"), "{py}");
+        assert!(!py.contains("TODO(COBOL_to)"), "{py}");
+        let rs = to_rust(&p);
+        assert!(rs.contains("sys_val(\"DATE8\")"), "{rs}");
     }
     #[test]
     fn evaluate_arms() {
