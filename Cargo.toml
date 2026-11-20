@@ -1,6 +1,6 @@
 [package]
 name = "pl2pl"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "pl2pl: platform / HPC porting converters (COBOL+JCL to Linux, UNIX C to portable C, OpenMP, Kokkos, Numba)"
 license = "MIT"
