@@ -6,5 +6,5 @@ license = "MIT"
 description = "COBOL dialect auto-detection and conversion to Rust/RPoem/Python stacks"
 
 [dependencies]
-rfd = "0.15"
+rfd = "0.18"
 walkdir = "2"
