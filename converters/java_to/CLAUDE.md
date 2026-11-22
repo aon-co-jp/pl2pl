@@ -93,3 +93,12 @@ Agora são convertidas as lambdas com corpo em bloco e as chamadas comuns da API
 **Done**: the Rust (Poem / RPoem) side used to carry only a single simple `return`. The new `src/rsblock.rs` also converts **local variables, assignments (`+=` etc.), `if / else`, `for (int i = a; i < b; i++)`, `while` and multiple `return`s**; string `+` becomes `format!`. If any statement is unsupported, it falls back to the TODO response as before (it never emits broken code). Verified: 27 unit tests, and the generated Rust passes `cargo check` under `tests/run-rust.sh` (four Poem samples) and `tests/run-rpoem.sh` (a `total` method was added to the sample). Synced to pl2pl `converters/java_to`.
 **Still open**: bodies with method calls or collection operations, anonymous classes with state, other `groupingBy` downstream collectors (`reducing`, etc.), and end-to-end runs on real projects such as Spring PetClinic.
 **Caveat**: methods are looked up by name and the first match wins (so the sample method is called `total`, not `sum`).
+
+
+## 2026-11-22 追記2: 未了の仕上げ(日本語)
+- **`groupingBy` の下流コレクター**: `averagingInt/Long/Double`・`joining`・`toSet`・`reducing`(2引数、3引数)に対応しました。
+- **複数引数のラムダ**: `(x, y) -> x + y` のような丸かっこ付きラムダを、これまでの「引数1つだけ」から広げました(`reducing` の確認で見つかった不足)。
+- **状態を持つ無名クラス**: フィールド付きの `new I() { int n = 0; ... }` を、`__init__` でフィールドを初期化する Python クラス(`_AnonN`)として出します。最初のメソッドは `__call__` でも呼べます。
+- **Rust 側の本体**: `Math.max/min/abs/pow/sqrt`、`String.valueOf`、文字列の `length/size/toUpperCase/toLowerCase/trim/isEmpty/contains/startsWith/endsWith/equals` に対応しました。対応外の呼び出しがあれば、これまでどおり TODO の応答に戻します。
+- **確認**: 単体テスト30件(生成した Python を実行して結果を確認)。`tests/run-rust.sh`・`tests/run-rpoem.sh` で生成 Rust のコンパイル確認。pl2pl の `converters/java_to` にも同期しました。
+- **まだ**: コレクション操作を含む Rust 本体、Spring PetClinic など実プロジェクトでの通し確認、複数メソッドを持つ無名クラスの全メソッド対応(いまは最初の1つだけ)。

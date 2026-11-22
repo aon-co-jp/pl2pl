@@ -25,7 +25,48 @@ fn rs_expr(toks: &[Tok], vars: &[(String, String)], locals: &HashSet<String>) ->
         return Some(format!("format!({:?}{})", fmt, args.iter().map(|a| format!(", {a}")).collect::<String>()));
     }
     let mut out: Vec<String> = vec![];
-    for t in toks {
+    let mut k = 0;
+    while k < toks.len() {
+        let t = &toks[k];
+        k += 1;
+        // `x.m(...)` / `Math.f(...)` の単純な呼び出し
+        if let (Tok::Id(recv), Some(d), Some(Tok::Id(m)), Some(o)) = (t, toks.get(k), toks.get(k + 1), toks.get(k + 2)) {
+            if d.is(".") && o.is("(") {
+                let close = match_close(toks, k + 2, "(", ")")?;
+                let args: Vec<Vec<Tok>> = crate::parse::split_top(&toks[k + 3..close], ",").into_iter().filter(|a| !a.is_empty()).collect();
+                let a: Option<Vec<String>> = args.iter().map(|x| rs_expr(x, vars, locals)).collect();
+                let a = a?;
+                let r = if recv == "Math" {
+                    match (m.as_str(), a.as_slice()) {
+                        ("max", [x, y]) => format!("({x}).max({y})"),
+                        ("min", [x, y]) => format!("({x}).min({y})"),
+                        ("abs", [x]) => format!("({x}).abs()"),
+                        ("pow", [x, y]) => format!("({x} as f64).powf({y} as f64)"),
+                        ("sqrt", [x]) => format!("({x} as f64).sqrt()"),
+                        _ => return None,
+                    }
+                } else if recv == "String" && m == "valueOf" && a.len() == 1 {
+                    format!("({}).to_string()", a[0])
+                } else {
+                    let rv = if locals.contains(recv) { rust_ident(recv) } else { vars.iter().find(|(j, _)| j == recv)?.1.clone() };
+                    match (m.as_str(), a.as_slice()) {
+                        ("length", []) | ("size", []) => format!("({rv}.len() as i32)"),
+                        ("toUpperCase", []) => format!("{rv}.to_uppercase()"),
+                        ("toLowerCase", []) => format!("{rv}.to_lowercase()"),
+                        ("trim", []) => format!("{rv}.trim().to_string()"),
+                        ("isEmpty", []) => format!("{rv}.is_empty()"),
+                        ("contains", [x]) => format!("{rv}.contains({x}.as_str())"),
+                        ("startsWith", [x]) => format!("{rv}.starts_with({x}.as_str())"),
+                        ("endsWith", [x]) => format!("{rv}.ends_with({x}.as_str())"),
+                        ("equals", [x]) => format!("({rv} == {x})"),
+                        _ => return None,
+                    }
+                };
+                out.push(r);
+                k = close + 1;
+                continue;
+            }
+        }
         match t {
             Tok::Num(n) => out.push(n.trim_end_matches(['L', 'l', 'f', 'F', 'd', 'D']).to_string()),
             Tok::Str(s) => out.push(format!("{:?}.to_string()", s)),
@@ -197,6 +238,14 @@ mod tests {
     fn strings() {
         let r = run("String g = \"hi \" + n; return g + \"!\";").unwrap();
         assert!(r.contains("format!(\"hi {}\", n)"));
+    }
+    #[test]
+    fn method_calls() {
+        let r = run("String u = \"ab\".toUpperCase(); return Math.max(n, 3);");
+        assert!(r.is_none());
+        let r = run("int m = Math.max(n, 3); int l = Math.abs(m); return l;").unwrap();
+        assert!(r.contains("(n).max(3)"));
+        assert!(r.contains("(m).abs()"));
     }
     #[test]
     fn unsupported() {

@@ -970,6 +970,12 @@ impl<'a> Tr<'a> {
                     }
                 }
                 let inner = self.balanced("(", ")");
+                if self.at("->") {
+                    // 複数引数(または型付き・空)のラムダ `(a, b) -> ...`
+                    self.i += 1;
+                    let params: Vec<String> = split_top(&inner, ",").iter().filter_map(|p| if let Some(Tok::Id(n)) = p.last() { Some(n.clone()) } else { None }).collect();
+                    return self.lambda(params);
+                }
                 let x = self.sub_expr(&inner);
                 let r = e(format!("({})", x.s), &x.ty);
                 self.postfix(r)
@@ -1220,6 +1226,61 @@ impl<'a> Tr<'a> {
             .filter_map(|x| x.iter().rev().find_map(|t| if let Tok::Id(n) = t { Some(n.clone()) } else { None }))
             .collect();
         let body: Vec<Tok> = inner[lb + 1..rb].to_vec();
+        // フィールド(最初のメソッドより前の `型 名 = 初期値;`)があれば、状態を持つクラスにする
+        let hdr = (0..lp).rev().find(|&k| inner[k].is(";") || inner[k].is("}")).map(|k| k + 1).unwrap_or(0);
+        if inner[..hdr].iter().any(|t| t.is(";")) {
+            let mut inits: Vec<(String, String)> = vec![];
+            let mut names: Vec<String> = vec![];
+            for f in split_top(&inner[..hdr], ";") {
+                if f.is_empty() {
+                    continue;
+                }
+                let eq = f.iter().position(|t| t.is("="));
+                let head = &f[..eq.unwrap_or(f.len())];
+                let Some(Tok::Id(n)) = head.last().cloned() else { continue };
+                let init = match eq {
+                    Some(k) => self.sub_expr(&f[k + 1..]).s,
+                    None => "None".to_string(),
+                };
+                names.push(n.clone());
+                inits.push((snake(&n), init));
+            }
+            let saved = std::mem::replace(&mut self.c.fields, names.into_iter().collect());
+            for p in &params {
+                self.c.lambda_params.push(p.clone());
+            }
+            self.c.lam_n += 1;
+            let cname = format!("_Anon{}", self.c.lam_n);
+            let mname = match &inner[lp - 1] {
+                Tok::Id(n) => snake(n),
+                _ => "call".to_string(),
+            };
+            let mut lines: Vec<String> = vec![];
+            {
+                let mut sub = Tr { t: &body, i: 0, c: &mut *self.c };
+                sub.stmts(2, &mut lines);
+            }
+            for _ in &params {
+                self.c.lambda_params.pop();
+            }
+            self.c.fields = saved;
+            if lines.is_empty() {
+                lines.push("        pass".into());
+            }
+            let mut def = vec![format!("class {cname}:"), "    def __init__(self):".to_string()];
+            for (n, v) in &inits {
+                def.push(format!("        self.{n} = {v}"));
+            }
+            if inits.is_empty() {
+                def.push("        pass".into());
+            }
+            let plist: String = params.iter().map(|x| format!(", {}", snake(x))).collect();
+            def.push(format!("    def {mname}(self{plist}):"));
+            def.extend(lines);
+            def.push(format!("    __call__ = {mname}"));
+            self.c.hoisted.extend(def);
+            return e(format!("{cname}()"), "");
+        }
         for p in &params {
             self.c.lambda_params.push(p.clone());
         }
@@ -1494,6 +1555,26 @@ impl<'a> Tr<'a> {
                 } else if let Some(rest) = down.strip_prefix("Collectors.mapping(") {
                     let m = rest.split(", Collectors.").next().unwrap_or("").to_string();
                                         if rest.contains("Collectors.to_set(") { format!("set(map({m}, {g}))") } else { format!("list(map({m}, {g}))") }
+                } else if let Some(rest) = down.strip_prefix("Collectors.averaging_int(").or_else(|| down.strip_prefix("Collectors.averaging_long(")).or_else(|| down.strip_prefix("Collectors.averaging_double(")) {
+                    let m = rest.strip_suffix(')').unwrap_or(rest);
+                    format!("(lambda _g: sum(map({m}, _g)) / len(_g))({g})")
+                } else if let Some(rest) = down.strip_prefix("Collectors.joining(") {
+                    let sep = rest.strip_suffix(')').unwrap_or(rest);
+                    format!("{}.join(map(str, {g}))", if sep.is_empty() { "\"\"" } else { sep })
+                } else if let Some(rest) = down.strip_prefix("Collectors.to_set(") {
+                    let _ = rest;
+                    format!("set({g})")
+                } else if let Some(rest) = down.strip_prefix("Collectors.reducing(") {
+                    // reducing(identity, op) / reducing(identity, mapper, op)
+                    let args = split_py_args(rest.strip_suffix(')').unwrap_or(rest));
+                    match args.as_slice() {
+                        [id, op] => format!("__import__('functools').reduce({op}, {g}, {id})"),
+                        [id, m, op] => format!("__import__('functools').reduce({op}, map({m}, {g}), {id})"),
+                        _ => {
+                            self.c.notes.push(format!("groupingBy の下流コレクター {down} は未対応"));
+                            g.to_string()
+                        }
+                    }
                 } else {
                     self.c.notes.push(format!("groupingBy の下流コレクター {down} は未対応"));
                     g.to_string()
@@ -1823,6 +1904,54 @@ pub fn translate_expr(toks: &[Tok], ctx: &mut Ctx) -> String {
     tr.expr(0).s
 }
 
+/// Python 式の引数をトップレベルのカンマで分ける。
+fn split_py_args(s: &str) -> Vec<String> {
+    let (mut out, mut cur, mut d) = (vec![], String::new(), 0i32);
+    let mut q: Option<char> = None;
+    let mut in_lambda_head = false;
+    for ch in s.chars() {
+        if let Some(c) = q {
+            cur.push(ch);
+            if ch == c {
+                q = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => {
+                q = Some(ch);
+                cur.push(ch);
+            }
+            '(' | '[' | '{' => {
+                d += 1;
+                cur.push(ch);
+            }
+            ')' | ']' | '}' => {
+                d -= 1;
+                cur.push(ch);
+            }
+            ':' if d == 0 && in_lambda_head => {
+                in_lambda_head = false;
+                cur.push(ch);
+            }
+            ',' if d == 0 && !in_lambda_head => {
+                out.push(cur.trim().to_string());
+                cur.clear();
+            }
+            _ => {
+                cur.push(ch);
+                if d == 0 && cur.ends_with("lambda ") && cur[..cur.len() - 7].chars().last().is_none_or(|c| !c.is_alphanumeric() && c != '_') {
+                    in_lambda_head = true;
+                }
+            }
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur.trim().to_string());
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1896,6 +2025,21 @@ print(m, t, u)
         }
     }
     #[test]
+    fn grouping_downstream_more() {
+        let p = tb("List<String> xs = new ArrayList<>(); Map<Integer, String> j = xs.stream().collect(Collectors.groupingBy(String::length, Collectors.joining(\"-\"))); Map<Integer, Double> a = xs.stream().collect(Collectors.groupingBy(String::length, Collectors.averagingInt(String::length))); Map<Integer, Integer> r = xs.stream().collect(Collectors.groupingBy(String::length, Collectors.reducing(0, String::length, (x, y) -> x + y)));");
+        assert!(!p.contains("未対応"), "{p}");
+        let p = p.lines().map(|l| l.trim_start()).collect::<Vec<_>>().join("
+");
+        let prog = format!("{}
+print(j, a, r)
+", p.replacen("xs = []", "xs = [\"bb\", \"a\", \"cc\"]", 1));
+        if let Ok(o) = std::process::Command::new("python").args(["-c", &prog]).output() {
+            assert!(o.status.success(), "{prog}
+{}", String::from_utf8_lossy(&o.stderr));
+            assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "{2: 'bb-cc', 1: 'a'} {2: 2.0, 1: 1.0} {2: 4, 1: 1}", "{prog}");
+        }
+    }
+    #[test]
     fn partitioning_and_averaging() {
         let p = tb("List<String> xs = new ArrayList<>(); Map<Boolean, List<String>> a = xs.stream().collect(Collectors.partitioningBy(x -> x.length() > 1)); Map<Boolean, Long> b = xs.stream().collect(Collectors.partitioningBy(x -> x.length() > 1, Collectors.counting())); double c = xs.stream().collect(Collectors.averagingInt(String::length));");
         assert!(!p.contains("未対応"), "{p}");
@@ -1931,6 +2075,20 @@ print(m)
         assert!(!p.contains("未対応"), "{p}");
         assert!(p.contains("def _anon"), "{p}");
         // hoisted の def は本体と同じ字下げで出る。字下げを揃えて実際に動かす
+        let prog = format!("{}
+print(s)
+", p.lines().map(|l| l.strip_prefix("    ").unwrap_or(l)).collect::<Vec<_>>().join("
+").replacen("xs = []", "xs = [1, 3, 2]", 1));
+        if let Ok(o) = std::process::Command::new("python").args(["-c", &prog]).output() {
+            assert!(o.status.success(), "{prog}
+{}", String::from_utf8_lossy(&o.stderr));
+            assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "[3, 2, 1]", "{prog}");
+        }
+    }
+    #[test]
+    fn anonymous_class_with_state() {
+        let p = tb("List<Integer> xs = new ArrayList<>(); Comparator<Integer> c = new Comparator<Integer>() { int calls = 0; public int compare(Integer a, Integer b) { calls++; return b - a; } }; List<Integer> s = xs.stream().sorted(c).collect(Collectors.toList()); int n = c.calls;");
+        assert!(p.contains("class _Anon"), "{p}");
         let prog = format!("{}
 print(s)
 ", p.lines().map(|l| l.strip_prefix("    ").unwrap_or(l)).collect::<Vec<_>>().join("
