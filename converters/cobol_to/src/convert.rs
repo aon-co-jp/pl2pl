@@ -73,9 +73,19 @@ pub enum Stmt {
     SortFile(String, Vec<(String, bool)>, Vec<String>, Vec<String>, Option<(String, Option<String>)>, Option<(String, Option<String>)>), // SORT: 整列用ファイル, (キー項目, 昇順か), USING, GIVING, INPUT PROCEDURE, OUTPUT PROCEDURE
     Release(String, Option<Expr>),            // RELEASE レコード [FROM]: 整列用ファイル名
     Return(String, Option<String>, Vec<Stmt>, Vec<Stmt>), // RETURN 整列用ファイル [INTO] AT END / NOT AT END
+    Sql(SqlKind, String, Vec<String>, Vec<String>), // EXEC SQL: 種類, SQL 文(:変数 は ? に置換済み), 渡す変数(出現順), INTO の変数
     Stop,
     Nop,
     Todo(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SqlKind {
+    Exec,          // INSERT / UPDATE / DELETE / COMMIT など(結果の行は使わない)
+    Select,        // SELECT ... INTO(先頭の1行を取る)
+    Open(String),  // OPEN カーソル(問い合わせを実行して行を保持)
+    Fetch(String), // FETCH カーソル INTO
+    Close(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -120,6 +130,7 @@ pub struct Program {
     pub conds: Vec<CondName>,
     pub notes: Vec<String>,
     pub tables: Vec<(String, usize, String)>, // OCCURS 表: 名前, 件数, INDEXED BY の索引名(無ければ空)
+    pub uses_sql: bool,                       // EXEC SQL を含む
 }
 
 fn strip(src: &str, free: bool) -> Vec<String> {
@@ -171,10 +182,22 @@ struct Tok {
 }
 
 /// 引用符内の空白を保持し、括弧を独立したトークンにし、文末の '.' は dot フラグにする。
+/// EXEC SQL ... END-EXEC の内側かどうかを、直近の語から更新する(内側ではカンマを語として残す)
+fn sql_region(raw: &[String], in_sql: &mut bool) {
+    if let Some(last) = raw.last() {
+        if last.to_uppercase().starts_with("END-EXEC") {
+            *in_sql = false;
+        } else if raw.len() >= 2 && raw[raw.len() - 2].eq_ignore_ascii_case("EXEC") && last.eq_ignore_ascii_case("SQL") {
+            *in_sql = true;
+        }
+    }
+}
+
 fn tokenize(s: &str) -> Vec<Tok> {
     let mut raw: Vec<String> = vec![];
     let mut cur = String::new();
     let mut q: Option<char> = None;
+    let mut in_sql = false;
     for c in s.chars() {
         match q {
             Some(qc) => {
@@ -187,14 +210,23 @@ fn tokenize(s: &str) -> Vec<Tok> {
                 cur.push(c);
                 q = Some(c);
             }
+            None if c == ',' && in_sql => {
+                if !cur.is_empty() {
+                    raw.push(std::mem::take(&mut cur));
+                    sql_region(&raw, &mut in_sql);
+                }
+                raw.push(",".to_string());
+            }
             None if c.is_whitespace() || c == ',' || c == ';' => {
                 if !cur.is_empty() {
                     raw.push(std::mem::take(&mut cur));
+                    sql_region(&raw, &mut in_sql);
                 }
             }
             None if c == '(' || c == ')' => {
                 if !cur.is_empty() {
                     raw.push(std::mem::take(&mut cur));
+                    sql_region(&raw, &mut in_sql);
                 }
                 raw.push(c.to_string());
             }
@@ -239,6 +271,8 @@ struct P {
     conds: Vec<CondName>,
     files: Vec<FileDef>,
     tables: Vec<(String, usize, String)>,
+    cursors: Vec<(String, String, Vec<String>)>, // DECLARE CURSOR: 名前, SQL, 渡す変数
+    sql_used: bool,
 }
 
 impl P {
@@ -257,6 +291,117 @@ impl P {
             _ => None,
         }
     }
+    /// SQL 文の語の並びから、:変数 を ? に置き換えた文と、変数名(出現順)を作る
+    fn sql_text(&mut self, toks: &[String]) -> Result<(String, Vec<String>), String> {
+        let joined = toks.join(" ");
+        let chars: Vec<char> = joined.chars().collect();
+        let (mut out, mut params) = (String::new(), vec![]);
+        let mut q: Option<char> = None;
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i];
+            if let Some(qc) = q {
+                out.push(c);
+                if c == qc {
+                    q = None;
+                }
+                i += 1;
+                continue;
+            }
+            if c == '\'' || c == '"' {
+                q = Some(c);
+                out.push(c);
+                i += 1;
+            } else if c == ':' && i + 1 < chars.len() && chars[i + 1].is_alphabetic() {
+                let mut j = i + 1;
+                while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '-' || chars[j] == '_') {
+                    j += 1;
+                }
+                let name: String = chars[i + 1..j].iter().collect::<String>().trim_end_matches('-').to_string();
+                if j < chars.len() && chars[j] == ':' {
+                    return Err("指示子変数(:変数:指示子)は未対応".into());
+                }
+                let id = ident(&name);
+                self.used.insert(id.clone());
+                params.push(id);
+                out.push('?');
+                i = i + 1 + name.chars().count();
+            } else {
+                out.push(c);
+                i += 1;
+            }
+        }
+        Ok((out, params))
+    }
+
+    /// INTO の後ろの :変数 の並び(カンマは読み飛ばす)
+    fn sql_into_vars(&mut self, toks: &[String]) -> Result<Vec<String>, String> {
+        let mut v = vec![];
+        for t in toks {
+            if t == "," {
+                continue;
+            }
+            let n = t.strip_prefix(':').ok_or("INTO には :変数 を書く")?;
+            if n.contains(':') {
+                return Err("指示子変数(:変数:指示子)は未対応".into());
+            }
+            let id = ident(n);
+            self.used.insert(id.clone());
+            v.push(id);
+        }
+        if v.is_empty() {
+            return Err("INTO の変数が無い".into());
+        }
+        Ok(v)
+    }
+
+    fn sql_stmt(&mut self, toks: &[String]) -> Result<Stmt, String> {
+        let up: Vec<String> = toks.iter().map(|t| t.to_uppercase()).collect();
+        let first = up.first().cloned().unwrap_or_default();
+        let cursor = |name: Option<&String>| -> Result<String, String> { name.map(|n| ident(n)).ok_or_else(|| "カーソル名が無い".to_string()) };
+        match first.as_str() {
+            "" => Err("EXEC SQL の中身が空".into()),
+            "INCLUDE" => Ok(Stmt::Nop),
+            "BEGIN" | "END" if up.get(1).map(|w| w == "DECLARE").unwrap_or(false) => Ok(Stmt::Nop),
+            "WHENEVER" => Err("WHENEVER は未対応(SQLCODE を IF で調べる)".into()),
+            "DECLARE" => {
+                let name = cursor(toks.get(1))?;
+                if up.get(2).map(|w| w.as_str()) != Some("CURSOR") {
+                    return Err("DECLARE は CURSOR のみ対応".into());
+                }
+                let f = up.iter().position(|w| w == "FOR").ok_or("CURSOR に FOR が無い")?;
+                let (sql, params) = self.sql_text(&toks[f + 1..])?;
+                self.cursors.push((name, sql, params));
+                Ok(Stmt::Nop)
+            }
+            "OPEN" => {
+                let name = cursor(toks.get(1))?;
+                let (_, sql, params) = self.cursors.iter().find(|c| c.0 == name).cloned().ok_or_else(|| format!("カーソル {name} が DECLARE されていない"))?;
+                Ok(Stmt::Sql(SqlKind::Open(name), sql, params, vec![]))
+            }
+            "FETCH" => {
+                let name = cursor(toks.get(1))?;
+                let i = up.iter().position(|w| w == "INTO").ok_or("FETCH に INTO が無い")?;
+                let into = self.sql_into_vars(&toks[i + 1..])?;
+                Ok(Stmt::Sql(SqlKind::Fetch(name), String::new(), vec![], into))
+            }
+            "CLOSE" => Ok(Stmt::Sql(SqlKind::Close(cursor(toks.get(1))?), String::new(), vec![], vec![])),
+            "SELECT" => {
+                let i = up.iter().position(|w| w == "INTO").ok_or("SELECT に INTO が無い(複数行はカーソルを使う)")?;
+                let f = up.iter().skip(i).position(|w| w == "FROM").map(|k| k + i).unwrap_or(toks.len());
+                let into = self.sql_into_vars(&toks[i + 1..f])?;
+                let mut rest: Vec<String> = toks[..i].to_vec();
+                rest.extend_from_slice(&toks[f..]);
+                let (sql, params) = self.sql_text(&rest)?;
+                Ok(Stmt::Sql(SqlKind::Select, sql, params, into))
+            }
+            _ => {
+                let (sql, params) = self.sql_text(toks)?;
+                Ok(Stmt::Sql(SqlKind::Exec, sql, params, vec![]))
+            }
+        }
+    }
+
     fn cond_of_name(&self, n: &str) -> Option<Cond> {
         let c = self.conds.iter().find(|c| c.name == n)?;
         let mut acc: Option<Cond> = None;
@@ -1617,8 +1762,29 @@ impl P {
             }
             "EXEC" => {
                 let kind = self.up(1);
-                self.skip_through("END-EXEC");
-                Stmt::Todo(format!("EXEC {kind}(埋め込み SQL/CICS)は未対応"))
+                if kind != "SQL" {
+                    self.skip_through("END-EXEC");
+                    return Some(Stmt::Todo(format!("EXEC {kind}(CICS など)は未対応")));
+                }
+                self.next();
+                self.next();
+                let mut toks: Vec<String> = vec![];
+                while let Some(t) = self.peek() {
+                    if t.s.to_uppercase().starts_with("END-EXEC") {
+                        let d = t.dot;
+                        self.next();
+                        self.ended = d;
+                        break;
+                    }
+                    toks.push(t.s.clone());
+                    self.next();
+                }
+                self.sql_used = true;
+                self.used.insert("sqlcode".to_string());
+                match self.sql_stmt(&toks) {
+                    Ok(st) => st,
+                    Err(e) => Stmt::Todo(format!("EXEC SQL: {e}")),
+                }
             }
             "OPEN" => {
                 self.next();
@@ -2118,7 +2284,26 @@ pub fn parse(src: &str, free: bool) -> Program {
     }
     // 手続き部
     if let Some(pa) = proc_at {
-        let mut st = P { t: toks[pa + 2..].to_vec(), i: 0, ended: false, used: BTreeSet::new(), subs: vec![], conds: p.conds.clone(), files: p.files.clone(), tables: p.tables.clone() };
+        let mut st = P { t: toks[pa + 2..].to_vec(), i: 0, ended: false, used: BTreeSet::new(), subs: vec![], conds: p.conds.clone(), files: p.files.clone(), tables: p.tables.clone(), cursors: vec![], sql_used: false };
+        // データ部(WORKING-STORAGE)に書かれた EXEC SQL DECLARE ... CURSOR を先に拾う
+        {
+            let mut k = 0;
+            while k + 1 < pa {
+                if toks[k].s.eq_ignore_ascii_case("EXEC") && toks[k + 1].s.eq_ignore_ascii_case("SQL") {
+                    let mut sub: Vec<String> = vec![];
+                    let mut m = k + 2;
+                    while m < pa && !toks[m].s.to_uppercase().starts_with("END-EXEC") {
+                        sub.push(toks[m].s.clone());
+                        m += 1;
+                    }
+                    if sub.first().map(|w| w.eq_ignore_ascii_case("DECLARE")).unwrap_or(false) {
+                        let _ = st.sql_stmt(&sub);
+                    }
+                    k = m;
+                }
+                k += 1;
+            }
+        }
         // PROCEDURE DIVISION [USING ...] . の見出しの残りを読み飛ばす
         if pa + 1 < toks.len() && !toks[pa + 1].dot {
             while let Some(t) = st.peek() {
@@ -2162,6 +2347,10 @@ pub fn parse(src: &str, free: bool) -> Program {
         // 宣言の無い変数を足す(段落名は除く)
         let paras: Vec<String> = p.paragraphs.iter().map(|x| x.0.clone()).collect();
         p.subs = std::mem::take(&mut st.subs);
+        p.uses_sql = st.sql_used;
+        if p.uses_sql && !p.vars.iter().any(|v| ident(&v.name) == "sqlcode") {
+            p.vars.push(Var { name: "SQLCODE".into(), numeric: true, width: 9, ..Default::default() });
+        }
         let known: Vec<String> = p.conds.iter().map(|c| c.name.clone()).chain(p.files.iter().map(|f| f.name.clone())).chain(p.alias.iter().map(|a| a.0.clone())).collect();
         for u in st.used {
             if !p.vars.iter().any(|v| ident(&v.name) == u) && !paras.contains(&u) && !known.contains(&u) {
@@ -2973,6 +3162,65 @@ fn emit(p: &Program, ss: &[Stmt], l: Lang, ind: usize, o: &mut String) {
                     }
                 }
             }
+            Stmt::Sql(kind, sql, params, into) => {
+                let sc = canon(p, "sqlcode");
+                let plist = |lang: Lang| -> String {
+                    params
+                        .iter()
+                        .map(|n| {
+                            let d = disp(p, &Expr::Var(n.clone()), lang);
+                            if lang == Lang::Py { format!("str({d})") } else { format!("format!(\"{{}}\", {d})") }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                // 結果の1行から変数へ代入する文
+                let assigns = |row: &str, lang: Lang| -> String {
+                    let mut a = String::new();
+                    for (i, n) in into.iter().enumerate() {
+                        let c = canon(p, n);
+                        let (numeric, scale) = var_of(p, n).map(|v| (v.numeric, v.scale)).unwrap_or((true, 0));
+                        match lang {
+                            Lang::Py => {
+                                let src = format!("({row}[{i}] if len({row}) > {i} else \"\")");
+                                a += &if numeric { format!("{pad}    self.{c} = _sqlnum({src}, {scale})\n") } else { format!("{pad}    self.{c} = str({src})\n") };
+                            }
+                            Lang::Rs => {
+                                let src = format!("{row}.get({i}).map(|x| x.as_str()).unwrap_or(\"\")");
+                                a += &if numeric { format!("{pad}    self.{c} = sql_num({src}, {scale});\n") } else { format!("{pad}    self.{c} = {src}.to_string();\n") };
+                            }
+                        }
+                    }
+                    a
+                };
+                match (kind, l) {
+                    (SqlKind::Exec, Lang::Py) => o.push_str(&format!("{pad}_c, _r = SQL_HANDLER({sql:?}, [{}])\n{pad}self.{sc} = _c\n", plist(l))),
+                    (SqlKind::Exec, Lang::Rs) => o.push_str(&format!("{pad}{{ let (c, _r) = sql_call({sql:?}, vec![{}]); self.{sc} = c; }}\n", plist(l))),
+                    (SqlKind::Select, Lang::Py) => {
+                        o.push_str(&format!("{pad}_c, _r = SQL_HANDLER({sql:?}, [{}])\n{pad}self.{sc} = _c if _c else (0 if _r else 100)\n{pad}if _c == 0 and _r:\n", plist(l)));
+                        o.push_str(&assigns("_r[0]", l));
+                    }
+                    (SqlKind::Select, Lang::Rs) => {
+                        o.push_str(&format!("{pad}{{\n{pad}    let (c, r) = sql_call({sql:?}, vec![{}]);\n{pad}    self.{sc} = if c != 0 {{ c }} else if r.is_empty() {{ 100 }} else {{ 0 }};\n{pad}    if c == 0 && !r.is_empty() {{\n{pad}        let row = &r[0];\n", plist(l)));
+                        o.push_str(&assigns("row", l).replace(&format!("{pad}    self."), &format!("{pad}        self.")));
+                        o.push_str(&format!("{pad}    }}\n{pad}}}\n"));
+                    }
+                    (SqlKind::Open(n), Lang::Py) => o.push_str(&format!("{pad}_c, _r = SQL_HANDLER({sql:?}, [{}])\n{pad}self.{sc} = _c\n{pad}self._cur[{n:?}] = [_r, 0]\n", plist(l))),
+                    (SqlKind::Open(n), Lang::Rs) => o.push_str(&format!("{pad}{{ let (c, r) = sql_call({sql:?}, vec![{}]); self.{sc} = c; self.sql_cur.insert({n:?}.to_string(), (r, 0)); }}\n", plist(l))),
+                    (SqlKind::Fetch(n), Lang::Py) => {
+                        o.push_str(&format!("{pad}_cur = self._cur.get({n:?})\n{pad}if _cur is not None and _cur[1] < len(_cur[0]):\n{pad}    _row = _cur[0][_cur[1]]\n{pad}    _cur[1] += 1\n{pad}    self.{sc} = 0\n"));
+                        o.push_str(&assigns("_row", l));
+                        o.push_str(&format!("{pad}else:\n{pad}    self.{sc} = 100 if _cur is not None else -501\n"));
+                    }
+                    (SqlKind::Fetch(n), Lang::Rs) => {
+                        o.push_str(&format!("{pad}{{\n{pad}    let exists = self.sql_cur.contains_key({n:?});\n{pad}    let got: Option<Vec<String>> = match self.sql_cur.get_mut({n:?}) {{ Some(cur) if cur.1 < cur.0.len() => {{ cur.1 += 1; Some(cur.0[cur.1 - 1].clone()) }} _ => None }};\n{pad}    match got {{\n{pad}        Some(row) => {{\n{pad}            self.{sc} = 0;\n"));
+                        o.push_str(&assigns("row", l).replace(&format!("{pad}    self."), &format!("{pad}            self.")));
+                        o.push_str(&format!("{pad}        }}\n{pad}        None => {{ self.{sc} = if exists {{ 100 }} else {{ -501 }}; }}\n{pad}    }}\n{pad}}}\n"));
+                    }
+                    (SqlKind::Close(n), Lang::Py) => o.push_str(&format!("{pad}self.{sc} = 0 if self._cur.pop({n:?}, None) is not None else -501\n")),
+                    (SqlKind::Close(n), Lang::Rs) => o.push_str(&format!("{pad}self.{sc} = if self.sql_cur.remove({n:?}).is_some() {{ 0 }} else {{ -501 }};\n")),
+                }
+            }
             Stmt::SizeErr(inner, err, ok) => size_emit(p, inner, err, ok, l, ind, o),
             Stmt::Stop => o.push_str(&match l {
                 Lang::Py => format!("{pad}return 1\n"),
@@ -3021,6 +3269,12 @@ pub fn to_python(p: &Program) -> String {
     let mut o = String::from("# COBOL_to generated(数値は 10^小数桁 倍した整数。割り算は 0 方向への切り捨て)\nimport os\n");
     o += &note_lines(p, "#");
     o += "\nEXTERNAL = {}  # CALL \"NAME\" の呼び先: EXTERNAL[\"NAME\"] = callable(*args)\n\n\n";
+    if p.uses_sql {
+        o += "from decimal import Decimal as _Dec, ROUND_DOWN as _RD\n\n_SQLDB = []\n\n\n";
+        o += "def _sql_default(sql, params):\n    import sqlite3\n    if not _SQLDB:\n        _SQLDB.append(sqlite3.connect(os.environ.get(\"COBOL_SQL_DB\", \":memory:\"), isolation_level=None))\n    cx = _SQLDB[0]\n    head = sql.split(None, 1)[0].upper() if sql.strip() else \"\"\n    try:\n        if head in (\"COMMIT\", \"ROLLBACK\"):\n            if cx.in_transaction:\n                cx.execute(head)\n            return 0, []\n        cur = cx.execute(sql, params)\n        rows = [[\"\" if v is None else str(v) for v in r] for r in cur.fetchall()] if cur.description else []\n        return 0, rows\n    except sqlite3.Error:\n        return -1, []\n\n\n";
+        o += "SQL_HANDLER = _sql_default  # 差し替え可: SQL_HANDLER(sql, params) -> (SQLCODE, 行のリスト)。標準は sqlite3(環境変数 COBOL_SQL_DB で DB ファイル)\n\n\n";
+        o += "def _sqlnum(x, s):\n    try:\n        return int((_Dec(str(x).strip()) * (10 ** s)).to_integral_value(rounding=_RD))\n    except Exception:\n        return 0\n\n\n";
+    }
     o += "def _tdiv(a, b):\n    q = abs(a) // abs(b)\n    return q if (a < 0) == (b < 0) else -q\n\n\n";
     o += "def _rdiv(a, b):\n    q = (abs(a) * 2 + abs(b)) // (abs(b) * 2)\n    return q if (a < 0) == (b < 0) else -q\n\n\n";
     o += "def _fmt(v, s):\n    d = str(abs(v)).rjust(s + 1, \"0\")\n    return (\"-\" if v < 0 else \"\") + d[:-s] + \".\" + d[-s:]\n\n\n";
@@ -3044,7 +3298,7 @@ pub fn to_python(p: &Program) -> String {
         }
         o += "}\n\n\n";
     }
-    o += "class State:\n    def __init__(self):\n        self.out = \"\"\n        self.goto = \"\"\n        self._fh = {}\n        self._sort_buf = []\n        self._sort_pos = 0\n";
+    o += "class State:\n    def __init__(self):\n        self.out = \"\"\n        self.goto = \"\"\n        self._fh = {}\n        self._sort_buf = []\n        self._sort_pos = 0\n        self._cur = {}\n";
     for v in &p.vars {
         let init = init_value(v);
         let val = if v.occurs > 0 { format!("[{init}] * {}", v.occurs) } else { init };
@@ -3077,6 +3331,10 @@ pub fn to_rust(p: &Program) -> String {
     let mut o = String::from("// COBOL_to generated. 数値は i64(10^小数桁 倍した整数)、文字は String。\n#![allow(unreachable_code, unused_parens, unused_assignments, unused_mut, unused_variables, dead_code)]\n");
     o += &note_lines(p, "//");
     o += "\n/// CALL \"NAME\" の呼び先(引数は文字列化して渡す)\npub type Ext = fn(&str, Vec<String>);\n\n";
+    if p.uses_sql {
+        o += "/// EXEC SQL の実行先。引数は (SQL 文(:変数 は ?), 変数の値の文字列)、戻り値は (SQLCODE, 行のリスト)\npub type SqlFn = fn(&str, Vec<String>) -> (i64, Vec<Vec<String>>);\nstatic SQL_HANDLER: std::sync::OnceLock<SqlFn> = std::sync::OnceLock::new();\n\n/// EXEC SQL の実行先を登録する(最初の1回だけ有効)。未登録なら SQLCODE は -1\npub fn set_sql_handler(f: SqlFn) {\n    let _ = SQL_HANDLER.set(f);\n}\n\nfn sql_call(sql: &str, params: Vec<String>) -> (i64, Vec<Vec<String>>) {\n    match SQL_HANDLER.get() {\n        Some(f) => f(sql, params),\n        None => (-1, vec![]),\n    }\n}\n\n";
+        o += "fn sql_num(s: &str, scale: u32) -> i64 {\n    let t = s.trim();\n    let (neg, t) = match t.strip_prefix('-') {\n        Some(r) => (true, r),\n        None => (false, t.strip_prefix('+').unwrap_or(t)),\n    };\n    let (ip, fp) = t.split_once('.').unwrap_or((t, \"\"));\n    let mut f: String = fp.chars().take(scale as usize).collect();\n    while f.len() < scale as usize {\n        f.push('0');\n    }\n    let v: i64 = format!(\"{}{}\", if ip.is_empty() { \"0\" } else { ip }, f).parse().unwrap_or(0);\n    if neg { -v } else { v }\n}\n\n";
+    }
     o += "fn rdiv(a: i64, b: i64) -> i64 {\n    let q = (a.abs() * 2 + b.abs()) / (b.abs() * 2);\n    if (a < 0) == (b < 0) { q } else { -q }\n}\n\n";
     o += "fn fmt_dec(v: i64, s: u32) -> String {\n    let d = format!(\"{:0>w$}\", v.abs(), w = s as usize + 1);\n    let k = d.len() - s as usize;\n    format!(\"{}{}.{}\", if v < 0 { \"-\" } else { \"\" }, &d[..k], &d[k..])\n}\n\n";
     o += "fn pad_num(v: i64, w: usize) -> String {\n    if v < 0 { format!(\"-{:0>w$}\", -v, w = w.saturating_sub(1)) } else { format!(\"{:0>w$}\", v, w = w) }\n}\n\n";
@@ -3092,8 +3350,8 @@ pub fn to_rust(p: &Program) -> String {
     for f in &p.files {
         o += &format!("    fr_{0}: Option<std::io::BufReader<std::fs::File>>,\n    fw_{0}: Option<std::fs::File>,\n", f.name);
     }
-    o += "    sort_buf: Vec<String>,\n    sort_pos: usize,\n";
-    o += "}\n\nimpl State {\n    fn new(ext: Option<Ext>) -> Self {\n        State {\n            out: String::new(),\n            goto: String::new(),\n            ext,\n            sort_buf: vec![],\n            sort_pos: 0,\n";
+    o += "    sort_buf: Vec<String>,\n    sort_pos: usize,\n    sql_cur: std::collections::HashMap<String, (Vec<Vec<String>>, usize)>,\n";
+    o += "}\n\nimpl State {\n    fn new(ext: Option<Ext>) -> Self {\n        State {\n            out: String::new(),\n            goto: String::new(),\n            ext,\n            sort_buf: vec![],\n            sort_pos: 0,\n            sql_cur: Default::default(),\n";
     for v in &p.vars {
         let init = init_value(v);
         let one = if v.numeric { init } else { format!("{init}.to_string()") };
@@ -3374,6 +3632,27 @@ mod tests {
         assert!(!to_python(&p).contains("TODO(COBOL_to)"));
         assert!(to_python(&p).contains("reversed(["));
         assert!(to_rust(&p).contains("sort_by"));
+    }
+
+    #[test]
+    fn exec_sql_select_cursor_and_hostvars() {
+        let src = std::fs::read_to_string("tests/samples/sql1.cbl").unwrap();
+        let p = parse(&src, false);
+        assert!(p.uses_sql);
+        let all: Vec<&Stmt> = p.stmts.iter().chain(p.paragraphs.iter().flat_map(|x| x.1.iter())).collect();
+        assert!(!all.iter().any(|s| matches!(s, Stmt::Todo(_))), "{:?}", all);
+        // :変数 は ? になり、カンマも残る。INTO は SQL から取り除かれる
+        assert!(all.iter().any(|s| matches!(s, Stmt::Sql(SqlKind::Select, q, pr, into) if q == "SELECT NAME , AMT FROM T WHERE ID = ?" && pr == &["ws_id"] && into == &["ws_name", "ws_amt"])), "{:?}", all);
+        // WORKING-STORAGE に書いた DECLARE CURSOR を OPEN で使える
+        assert!(all.iter().any(|s| matches!(s, Stmt::Sql(SqlKind::Open(n), q, _, _) if n == "c1" && q.ends_with("ORDER BY ID"))));
+        assert!(p.vars.iter().any(|v| v.name == "SQLCODE" && !v.undeclared));
+        let py = to_python(&p);
+        assert!(py.contains("SQL_HANDLER") && !py.contains("TODO(COBOL_to)"), "{py}");
+        assert!(to_rust(&p).contains("pub fn set_sql_handler"));
+        // 対応しない形は黙って落とさず TODO に残す
+        let w = parse("       PROGRAM-ID. W.\n       PROCEDURE DIVISION.\n           EXEC SQL WHENEVER SQLERROR CONTINUE END-EXEC.\n           EXEC CICS RETURN END-EXEC.\n           STOP RUN.\n", false);
+        let todos = w.stmts.iter().filter(|s| matches!(s, Stmt::Todo(_))).count();
+        assert_eq!(todos, 2, "{:?}", w.stmts);
     }
 
     #[test]
