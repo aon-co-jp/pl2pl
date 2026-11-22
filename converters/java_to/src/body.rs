@@ -1382,13 +1382,32 @@ impl<'a> Tr<'a> {
                 let sep = if sep.is_empty() { "\"\"".to_string() } else { sep };
                 e(format!("{sep}.join(map(str, {r}))"), "String")
             }
+            ("collect", 1) if !self.user_method(name) && a[0].starts_with("Collectors.to_map(") => {
+                let inner = a[0].trim_start_matches("Collectors.to_map(").strip_suffix(')').unwrap_or("").to_string();
+                let mut it = inner.splitn(2, ", ");
+                let (k, v) = (it.next().unwrap_or("").to_string(), it.next().unwrap_or("").to_string());
+                e(format!("(lambda _l, _k, _v: {{_k(x): _v(x) for x in _l}})({r}, {k}, {v})"), "")
+            }
             ("collect", 1) if !self.user_method(name) && a[0].starts_with("Collectors.grouping_by(") => {
-                let inner = a[0].trim_start_matches("Collectors.grouping_by(").trim_end_matches(')').to_string();
-                let (f, counting) = match inner.strip_suffix(", Collectors.counting(") {
-                    Some(f) => (f.to_string(), true),
-                    None => (inner.clone(), false),
+                let inner = a[0].trim_start_matches("Collectors.grouping_by(").strip_suffix(')').unwrap_or("").to_string();
+                let (f, down) = match inner.find(", Collectors.") {
+                    Some(i) => (inner[..i].to_string(), inner[i + 2..].to_string()),
+                    None => (inner.clone(), String::new()),
                 };
-                let val = if counting { "len([x for x in _l if _f(x) == k])" } else { "[x for x in _l if _f(x) == k]" };
+                let g = "[x for x in _l if _f(x) == k]";
+                let val = if down.is_empty() || down.starts_with("Collectors.to_list(") {
+                    g.to_string()
+                } else if down.starts_with("Collectors.counting(") {
+                    format!("len({g})")
+                } else if let Some(rest) = down.strip_prefix("Collectors.summing_int(").or_else(|| down.strip_prefix("Collectors.summing_long(")).or_else(|| down.strip_prefix("Collectors.summing_double(")) {
+                    format!("sum(map({}, {g}))", rest.strip_suffix(')').unwrap_or(rest))
+                } else if let Some(rest) = down.strip_prefix("Collectors.mapping(") {
+                    let m = rest.split(", Collectors.").next().unwrap_or("").to_string();
+                                        if rest.contains("Collectors.to_set(") { format!("set(map({m}, {g}))") } else { format!("list(map({m}, {g}))") }
+                } else {
+                    self.c.notes.push(format!("groupingBy の下流コレクター {down} は未対応"));
+                    g.to_string()
+                };
                 e(format!("(lambda _l, _f: {{k: {val} for k in dict.fromkeys(map(_f, _l))}})({r}, {f})"), "")
             }
             ("thenComparing", 1) | ("thenComparingInt", 1) | ("thenComparingDouble", 1) | ("thenComparingLong", 1) if r.starts_with("(lambda a, b:") => {
@@ -1769,6 +1788,21 @@ print(g, n, s)
             assert!(o.status.success(), "{prog}
 {}", String::from_utf8_lossy(&o.stderr));
             assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "{2: ['bb', 'cc'], 1: ['a', 'b'], 3: ['ddd']} {2: 2, 1: 2, 3: 1} ['a', 'b', 'bb', 'cc', 'ddd']", "{prog}");
+        }
+    }
+    #[test]
+    fn to_map_and_downstream() {
+        let p = tb("List<String> xs = new ArrayList<>(); Map<String, Integer> m = xs.stream().collect(Collectors.toMap(x -> x, String::length)); Map<Integer, Integer> t = xs.stream().collect(Collectors.groupingBy(String::length, Collectors.summingInt(String::length))); Map<Integer, List<String>> u = xs.stream().collect(Collectors.groupingBy(String::length, Collectors.mapping(String::toUpperCase, Collectors.toList())));");
+        assert!(!p.contains("未対応"), "{p}");
+        let p = p.lines().map(|l| l.trim_start()).collect::<Vec<_>>().join("
+");
+        let prog = format!("{}
+print(m, t, u)
+", p.replacen("xs = []", "xs = [\"bb\", \"a\", \"cc\"]", 1));
+        if let Ok(o) = std::process::Command::new("python").args(["-c", &prog]).output() {
+            assert!(o.status.success(), "{prog}
+{}", String::from_utf8_lossy(&o.stderr));
+            assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "{'bb': 2, 'a': 1, 'cc': 2} {2: 4, 1: 1} {2: ['BB', 'CC'], 1: ['A']}", "{prog}");
         }
     }
     #[test]
