@@ -478,6 +478,13 @@ impl P {
             Cond::Cmp("==".into(), sc(), num("100")),
         ];
         let mut v = vec![st];
+        // SQLSTATE を使うプログラムでは、SQLCODE から 5 桁の状態を毎回導く
+        if self.t.iter().any(|t| t.s.eq_ignore_ascii_case("SQLSTATE")) {
+            let ss = |x: &str| Stmt::Assign("sqlstate".to_string(), Expr::Str(x.to_string()));
+            v.push(ss("HY000"));
+            v.push(Stmt::If(Cond::Cmp("==".into(), sc(), num("0")), vec![ss("00000")], vec![]));
+            v.push(Stmt::If(Cond::Cmp("==".into(), sc(), num("100")), vec![ss("02000")], vec![]));
+        }
         for (i, c) in conds.into_iter().enumerate() {
             if let Some(a) = &self.whenever[i] {
                 v.push(Stmt::If(c, vec![a.clone()], vec![]));
@@ -2435,6 +2442,9 @@ pub fn parse(src: &str, free: bool) -> Program {
         if p.uses_sql && !p.vars.iter().any(|v| ident(&v.name) == "sqlcode") {
             p.vars.push(Var { name: "SQLCODE".into(), numeric: true, width: 9, ..Default::default() });
         }
+        if p.uses_sql && st.used.contains("sqlstate") && !p.vars.iter().any(|v| ident(&v.name) == "sqlstate") {
+            p.vars.push(Var { name: "SQLSTATE".into(), numeric: false, width: 5, ..Default::default() });
+        }
         let known: Vec<String> = p.conds.iter().map(|c| c.name.clone()).chain(p.files.iter().map(|f| f.name.clone())).chain(p.alias.iter().map(|a| a.0.clone())).collect();
         for u in st.used {
             if !p.vars.iter().any(|v| ident(&v.name) == u) && !paras.contains(&u) && !known.contains(&u) {
@@ -3774,6 +3784,15 @@ mod tests {
         let (pa, pb) = (to_python(&a), to_python(&b));
         assert_eq!(pa, pb);
         assert_eq!(to_rust(&a), to_rust(&b));
+    }
+
+    #[test]
+    fn sqlstate_derived_from_sqlcode() {
+        let p = parse(&std::fs::read_to_string("tests/samples/sql5.cbl").unwrap(), false);
+        let py = to_python(&p);
+        assert!(py.contains("\"HY000\"") && py.contains("\"02000\"") && py.contains("\"00000\""), "{py}");
+        assert!(!py.contains("TODO(COBOL_to)"), "{py}");
+        assert!(to_rust(&p).contains("02000"));
     }
 
     #[test]
