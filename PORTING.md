@@ -389,3 +389,6 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
 **未了(この順、確認不要)**: (1)Java_to の Rust 側(状態を持つ匿名クラス・`reducing`)、(2)COBOL_to の INDICATOR 句・SQLSTATE・動的SQL・EXEC CICS、(3)姉妹(RPoRea・Reaxt・RPoem・RMojo)での通し試験、(4)gfortran 以外の実機確認、Mac・iPhone 実機(実機なし)。
 **決まり**: 本物で確認してから「完了」/秘密は書かない/新しいRESTは作らない/元の COBOL_to・Java_to の削除だけ最後に本人確認/VPS用ビルドは `Ubuntu-24.04`/変換器を直したら `converters/` へ同期。
 **再開用メッセージ**: 前の続きです。`F:\pl2pl\PORTING.md` 末尾「2026-11-22 再開用メモ」を読んで、上の未了を確認なしで順に進めてください。返答は日本語のみ。
+
+## 2026-11-22 追記: INDICATOR キーワード形 (日本語)
+`:変数 INDICATOR :指示変数` の形を、`:変数:指示変数` と同じに扱うようにしました(パラメーターと `INTO` の両方)。`tests/samples/sql4.cbl` で、Python・Rust とも `sql3.cbl` と同じ出力になることを試験しました(21件成功)。固定形式の72桁を超える行は切り捨てられるため、長い EXEC SQL は折り返して書きます。残り: SQLSTATE・動的SQL・EXEC CICS。

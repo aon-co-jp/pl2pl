@@ -322,7 +322,24 @@ impl P {
                 let id = ident(&name);
                 self.used.insert(id.clone());
                 let mut consumed = 1 + name.chars().count();
-                if j < chars.len() && chars[j] == ':' && j + 1 < chars.len() && chars[j + 1].is_alphabetic() {
+                // INDICATOR キーワード形: :変数 INDICATOR :指示変数
+                let rest: String = chars[j..].iter().collect();
+                let kw = rest.trim_start();
+                let kwu = kw.to_uppercase();
+                if kwu.starts_with("INDICATOR ") && kw[10..].trim_start().starts_with(':') {
+                    let skipped = rest.chars().count() - kw.chars().count();
+                    let after = kw[10..].trim_start();
+                    let mut m = 1;
+                    let ac: Vec<char> = after.chars().collect();
+                    while m < ac.len() && (ac[m].is_alphanumeric() || ac[m] == '-' || ac[m] == '_') {
+                        m += 1;
+                    }
+                    let iname: String = ac[1..m].iter().collect::<String>().trim_end_matches('-').to_string();
+                    let iid = ident(&iname);
+                    self.used.insert(iid.clone());
+                    consumed += skipped + (kw.chars().count() - after.chars().count()) + m;
+                    params.push(format!("{id}:{iid}"));
+                } else if j < chars.len() && chars[j] == ':' && j + 1 < chars.len() && chars[j + 1].is_alphabetic() {
                     // 指示変数 :変数:指示変数(負なら NULL を渡す)
                     let mut k = j + 1;
                     while k < chars.len() && (chars[k].is_alphanumeric() || chars[k] == '-' || chars[k] == '_') {
@@ -348,9 +365,21 @@ impl P {
 
     /// INTO の後ろの :変数 の並び(カンマは読み飛ばす)
     fn sql_into_vars(&mut self, toks: &[String]) -> Result<Vec<String>, String> {
-        let mut v = vec![];
-        for t in toks {
+        let mut v: Vec<String> = vec![];
+        let mut k = 0;
+        while k < toks.len() {
+            let t = &toks[k];
+            k += 1;
             if t == "," {
+                continue;
+            }
+            if t.eq_ignore_ascii_case("INDICATOR") {
+                let ind = toks.get(k).and_then(|x| x.strip_prefix(':')).ok_or("INDICATOR の後に :指示変数")?;
+                k += 1;
+                let last = v.pop().ok_or("INDICATOR の前に変数が無い")?;
+                let ii = ident(ind);
+                self.used.insert(ii.clone());
+                v.push(format!("{last}:{ii}"));
                 continue;
             }
             let n = t.strip_prefix(':').ok_or("INTO には :変数 を書く")?;
@@ -3735,6 +3764,16 @@ mod tests {
         let w = parse("       PROGRAM-ID. W.\n       PROCEDURE DIVISION.\n           EXEC CICS RETURN END-EXEC.\n           STOP RUN.\n", false);
         let todos = w.stmts.iter().filter(|s| matches!(s, Stmt::Todo(_))).count();
         assert_eq!(todos, 1, "{:?}", w.stmts);
+    }
+
+    #[test]
+    fn indicator_keyword_form_equals_colon_form() {
+        let a = parse(&std::fs::read_to_string("tests/samples/sql3.cbl").unwrap(), false);
+        let b = parse(&std::fs::read_to_string("tests/samples/sql4.cbl").unwrap(), false);
+        assert!(std::fs::read_to_string("tests/samples/sql4.cbl").unwrap().contains("INDICATOR"));
+        let (pa, pb) = (to_python(&a), to_python(&b));
+        assert_eq!(pa, pb);
+        assert_eq!(to_rust(&a), to_rust(&b));
     }
 
     #[test]
