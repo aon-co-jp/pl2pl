@@ -115,6 +115,7 @@ pub struct Program {
     pub files: Vec<FileDef>,
     pub conds: Vec<CondName>,
     pub notes: Vec<String>,
+    pub tables: Vec<(String, usize, String)>, // OCCURS 表: 名前, 件数, INDEXED BY の索引名(無ければ空)
 }
 
 fn strip(src: &str, free: bool) -> Vec<String> {
@@ -233,6 +234,7 @@ struct P {
     subs: Vec<Expr>,
     conds: Vec<CondName>,
     files: Vec<FileDef>,
+    tables: Vec<(String, usize, String)>,
 }
 
 impl P {
@@ -1356,6 +1358,69 @@ impl P {
                     Stmt::Todo(format!("INSPECT: {e}"))
                 })
             }
+            "SEARCH" => {
+                self.next();
+                let r: Result<Stmt, String> = (|| {
+                    let all = self.word() == "ALL";
+                    if all {
+                        self.next();
+                    }
+                    let tname = ident(&self.next().ok_or("SEARCH の表名が無い")?.s);
+                    let (n, mut idx) = match self.tables.iter().find(|t| t.0 == tname) {
+                        Some(t) => (t.1, t.2.clone()),
+                        None => return Err(format!("SEARCH: 表 {tname} が OCCURS で宣言されていない")),
+                    };
+                    if self.word() == "VARYING" {
+                        self.next();
+                        idx = ident(&self.next().ok_or("VARYING の索引が無い")?.s);
+                    }
+                    if idx.is_empty() {
+                        return Err("SEARCH: 索引(INDEXED BY または VARYING)が無い".into());
+                    }
+                    self.used.insert(idx.clone());
+                    let mut at_end: Vec<Stmt> = vec![];
+                    if self.word() == "AT" && self.up(1) == "END" {
+                        self.next();
+                        self.next();
+                        at_end = self.block(true, &["WHEN", "END-SEARCH"]);
+                    }
+                    let mut arms: Vec<(Cond, Vec<Stmt>)> = vec![];
+                    while self.word() == "WHEN" {
+                        self.next();
+                        let c = self.cond()?;
+                        let body = self.block(true, &["WHEN", "END-SEARCH"]);
+                        arms.push((c, body));
+                    }
+                    if self.word() == "END-SEARCH" {
+                        let d = self.peek().map(|t| t.dot).unwrap_or(false);
+                        self.next();
+                        self.ended = d;
+                    }
+                    if arms.is_empty() {
+                        return Err("SEARCH に WHEN が無い".into());
+                    }
+                    let out_of = Cond::Cmp(">".into(), Expr::Var(idx.clone()), Expr::Num(n.to_string()));
+                    let mut until = out_of.clone();
+                    for (c, _) in &arms {
+                        until = Cond::Or(Box::new(until), Box::new(c.clone()));
+                    }
+                    let mut tail: Vec<Stmt> = vec![];
+                    for (c, body) in arms.into_iter().rev() {
+                        tail = vec![Stmt::If(c, body, tail)];
+                    }
+                    let mut out: Vec<Stmt> = vec![];
+                    if all {
+                        out.push(Stmt::Move(Expr::Num("1".into()), vec![idx.clone()]));
+                    }
+                    out.push(Stmt::Perform(Loop::Until(until), vec![Stmt::AddTo(idx.clone(), Expr::Num("1".into()))]));
+                    out.push(Stmt::If(out_of, at_end, tail));
+                    Ok(Stmt::If(Cond::Cmp("==".into(), Expr::Num("1".into()), Expr::Num("1".into())), out, vec![]))
+                })();
+                r.unwrap_or_else(|e| {
+                    self.skip_through("END-SEARCH");
+                    Stmt::Todo(format!("SEARCH: {e}"))
+                })
+            }
             "CALL" => {
                 self.next();
                 let r: Result<Stmt, String> = (|| {
@@ -1759,6 +1824,7 @@ pub fn parse(src: &str, free: bool) -> Program {
             let mut init = String::new();
             let mut has_pic = false;
             let mut occurs = 0usize;
+            let mut index_names: Vec<String> = vec![];
             let mut redef: Option<String> = None;
             let mut x = 0;
             while x < seg.len() {
@@ -1805,6 +1871,16 @@ pub fn parse(src: &str, free: bool) -> Program {
                             }
                         }
                     }
+                    "INDEXED" => {
+                        let mut y = x + 1;
+                        if seg.get(y).map(|s| s.to_uppercase() == "BY").unwrap_or(false) {
+                            y += 1;
+                        }
+                        while y < seg.len() && !matches!(seg[y].to_uppercase().as_str(), "PIC" | "PICTURE" | "VALUE" | "USAGE" | "COMP" | "COMP-3" | "BINARY" | "ASCENDING" | "DESCENDING" | "KEY" | "REDEFINES" | "OCCURS") {
+                            index_names.push(seg[y].trim_end_matches('.').to_string());
+                            y += 1;
+                        }
+                    }
                     "REDEFINES" => redef = seg.get(x + 1).map(|s| s.trim_end_matches('.').to_string()),
                     _ => {}
                 }
@@ -1817,7 +1893,16 @@ pub fn parse(src: &str, free: bool) -> Program {
             }
             if !has_pic && occurs > 0 {
                 group_occurs = Some((lvl, occurs));
+                p.tables.push((ident(&name), occurs, index_names.first().map(|n| ident(n)).unwrap_or_default()));
                 occurs = 0;
+            } else if has_pic && occurs > 0 {
+                p.tables.push((ident(&name), occurs, index_names.first().map(|n| ident(n)).unwrap_or_default()));
+            }
+            for ix in &index_names {
+                let iname = ident(ix);
+                if !p.vars.iter().any(|v| ident(&v.name) == iname) {
+                    p.vars.push(Var { name: ix.clone(), numeric: true, init: "1".into(), width: 4, ..Default::default() });
+                }
             }
             if has_pic && occurs == 0 {
                 if let Some((_, n)) = group_occurs {
@@ -1871,7 +1956,7 @@ pub fn parse(src: &str, free: bool) -> Program {
     }
     // 手続き部
     if let Some(pa) = proc_at {
-        let mut st = P { t: toks[pa + 2..].to_vec(), i: 0, ended: false, used: BTreeSet::new(), subs: vec![], conds: p.conds.clone(), files: p.files.clone() };
+        let mut st = P { t: toks[pa + 2..].to_vec(), i: 0, ended: false, used: BTreeSet::new(), subs: vec![], conds: p.conds.clone(), files: p.files.clone(), tables: p.tables.clone() };
         // PROCEDURE DIVISION [USING ...] . の見出しの残りを読み飛ばす
         if pa + 1 < toks.len() && !toks[pa + 1].dot {
             while let Some(t) = st.peek() {
@@ -2983,6 +3068,15 @@ mod tests {
         assert!(p.stmts.iter().any(|s| matches!(s, Stmt::InspectScoped(..))), "{:?}", p.stmts);
         assert!(to_python(&p).contains("_t.find(_a)"));
         assert!(to_rust(&p).contains("t0.find(a0.as_str())"));
+    }
+
+    #[test]
+    fn search_linear_and_all() {
+        let src = "       PROGRAM-ID. S.\n       DATA DIVISION.\n       WORKING-STORAGE SECTION.\n       01 TB PIC 99 OCCURS 5 INDEXED BY IX.\n       PROCEDURE DIVISION.\n           SEARCH TB AT END DISPLAY \"NONE\" WHEN TB(IX) = 30 DISPLAY \"HIT\" END-SEARCH.\n           SEARCH ALL TB WHEN TB(IX) = 30 DISPLAY \"HIT\" END-SEARCH.\n           STOP RUN.\n";
+        let p = parse(src, false);
+        assert!(!p.stmts.iter().any(|s| matches!(s, Stmt::Todo(_))), "{:?}", p.stmts);
+        assert!(p.vars.iter().any(|v| v.name == "IX"), "索引名が宣言される");
+        assert!(p.tables.iter().any(|t| t.0 == "tb" && t.1 == 5 && t.2 == "ix"));
     }
 
     #[test]
