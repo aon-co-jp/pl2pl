@@ -273,6 +273,7 @@ struct P {
     tables: Vec<(String, usize, String)>,
     cursors: Vec<(String, String, Vec<String>)>, // DECLARE CURSOR: 名前, SQL, 渡す変数
     sql_used: bool,
+    whenever: [Option<Stmt>; 3], // WHENEVER の現在の指定(SQLERROR / SQLWARNING / NOT FOUND の順)。None は CONTINUE
 }
 
 impl P {
@@ -363,7 +364,25 @@ impl P {
             "" => Err("EXEC SQL の中身が空".into()),
             "INCLUDE" => Ok(Stmt::Nop),
             "BEGIN" | "END" if up.get(1).map(|w| w == "DECLARE").unwrap_or(false) => Ok(Stmt::Nop),
-            "WHENEVER" => Err("WHENEVER は未対応(SQLCODE を IF で調べる)".into()),
+            "WHENEVER" => {
+                let (slot, k) = match (up.get(1).map(|w| w.as_str()), up.get(2).map(|w| w.as_str())) {
+                    (Some("SQLERROR"), _) => (0, 2),
+                    (Some("SQLWARNING"), _) => (1, 2),
+                    (Some("NOT"), Some("FOUND")) => (2, 3),
+                    _ => return Err("WHENEVER は SQLERROR / SQLWARNING / NOT FOUND のみ対応".into()),
+                };
+                let act = match (up.get(k).map(|w| w.as_str()), up.get(k + 1).map(|w| w.as_str())) {
+                    (Some("CONTINUE"), _) => None,
+                    (Some("STOP"), _) => Some(Stmt::Stop),
+                    (Some("GOTO"), _) => Some(Stmt::Goto(ident(toks.get(k + 1).ok_or("GOTO の行き先が無い")?))),
+                    (Some("GO"), Some("TO")) => Some(Stmt::Goto(ident(toks.get(k + 2).ok_or("GO TO の行き先が無い")?))),
+                    (Some("GO"), _) => Some(Stmt::Goto(ident(toks.get(k + 1).ok_or("GO の行き先が無い")?))),
+                    (Some("PERFORM"), _) => Some(Stmt::Call(ident(toks.get(k + 1).ok_or("PERFORM の段落名が無い")?))),
+                    _ => return Err("WHENEVER の動作は CONTINUE / GOTO / PERFORM / STOP のみ対応".into()),
+                };
+                self.whenever[slot] = act;
+                Ok(Stmt::Nop)
+            }
             "DECLARE" => {
                 let name = cursor(toks.get(1))?;
                 if up.get(2).map(|w| w.as_str()) != Some("CURSOR") {
@@ -400,6 +419,27 @@ impl P {
                 Ok(Stmt::Sql(SqlKind::Exec, sql, params, vec![]))
             }
         }
+    }
+
+    /// 直前の WHENEVER の指定を、SQL 文の直後の判定として付ける
+    fn whenever_wrap(&self, st: Stmt) -> Stmt {
+        if !matches!(st, Stmt::Sql(..)) {
+            return st;
+        }
+        let sc = || Expr::Var("sqlcode".to_string());
+        let num = |n: &str| Expr::Num(n.to_string());
+        let conds = [
+            Cond::Cmp("<".into(), sc(), num("0")),
+            Cond::And(Box::new(Cond::Cmp(">".into(), sc(), num("0"))), Box::new(Cond::Cmp("!=".into(), sc(), num("100")))),
+            Cond::Cmp("==".into(), sc(), num("100")),
+        ];
+        let mut v = vec![st];
+        for (i, c) in conds.into_iter().enumerate() {
+            if let Some(a) = &self.whenever[i] {
+                v.push(Stmt::If(c, vec![a.clone()], vec![]));
+            }
+        }
+        bundle(v)
     }
 
     fn cond_of_name(&self, n: &str) -> Option<Cond> {
@@ -1782,7 +1822,7 @@ impl P {
                 self.sql_used = true;
                 self.used.insert("sqlcode".to_string());
                 match self.sql_stmt(&toks) {
-                    Ok(st) => st,
+                    Ok(st) => self.whenever_wrap(st),
                     Err(e) => Stmt::Todo(format!("EXEC SQL: {e}")),
                 }
             }
@@ -2284,7 +2324,7 @@ pub fn parse(src: &str, free: bool) -> Program {
     }
     // 手続き部
     if let Some(pa) = proc_at {
-        let mut st = P { t: toks[pa + 2..].to_vec(), i: 0, ended: false, used: BTreeSet::new(), subs: vec![], conds: p.conds.clone(), files: p.files.clone(), tables: p.tables.clone(), cursors: vec![], sql_used: false };
+        let mut st = P { t: toks[pa + 2..].to_vec(), i: 0, ended: false, used: BTreeSet::new(), subs: vec![], conds: p.conds.clone(), files: p.files.clone(), tables: p.tables.clone(), cursors: vec![], sql_used: false, whenever: [None, None, None] };
         // データ部(WORKING-STORAGE)に書かれた EXEC SQL DECLARE ... CURSOR を先に拾う
         {
             let mut k = 0;
@@ -3650,9 +3690,9 @@ mod tests {
         assert!(py.contains("SQL_HANDLER") && !py.contains("TODO(COBOL_to)"), "{py}");
         assert!(to_rust(&p).contains("pub fn set_sql_handler"));
         // 対応しない形は黙って落とさず TODO に残す
-        let w = parse("       PROGRAM-ID. W.\n       PROCEDURE DIVISION.\n           EXEC SQL WHENEVER SQLERROR CONTINUE END-EXEC.\n           EXEC CICS RETURN END-EXEC.\n           STOP RUN.\n", false);
+        let w = parse("       PROGRAM-ID. W.\n       PROCEDURE DIVISION.\n           EXEC CICS RETURN END-EXEC.\n           STOP RUN.\n", false);
         let todos = w.stmts.iter().filter(|s| matches!(s, Stmt::Todo(_))).count();
-        assert_eq!(todos, 2, "{:?}", w.stmts);
+        assert_eq!(todos, 1, "{:?}", w.stmts);
     }
 
     #[test]
