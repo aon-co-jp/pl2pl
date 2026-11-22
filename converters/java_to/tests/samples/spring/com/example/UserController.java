@@ -77,4 +77,17 @@ public class UserController {
         }
         return s;
     }
+
+    @GetMapping("/squares/{n}")
+    public int squares(@PathVariable int n) {
+        List<Integer> xs = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            xs.add(i * i);
+        }
+        int t = 0;
+        for (int x : xs) {
+            t += x;
+        }
+        return t + xs.size();
+    }
 }
