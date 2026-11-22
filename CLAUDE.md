@@ -341,3 +341,8 @@ English: Techniques for running AI stably and fast on machines with no or little
 - 無名クラスにメソッドが複数あるとき、これまでは最初の1つだけを出していましたが、**すべてのメソッドを Python クラスのメソッドとして出す**ようにしました(フィールドは各メソッドから見えます)。最初のメソッドは従来どおり `__call__` でも呼べます。
 - 単体テストは31件成功(`anonymous_class_multiple_methods`)。生成物の文字列確認までで、Python 実行の通し確認は未了です。
 - 未了: コレクション操作を含む Rust 本体、Spring PetClinic など実プロジェクトでの通し確認。
+
+## 2026-11-23 追記: PREPARE / EXECUTE ... USING(日本語)
+- `EXEC SQL PREPARE 名 FROM :変数` で SQL 文を名前つきで保存し、`EXEC SQL EXECUTE 名 [USING :a, :b]` で `?` に値を渡して実行できます(Python・Rust 両方)。未準備の名前を実行すると SQLCODE は -518 です。
+- 試験は24件成功。生成した Python を実行し、`INSERT ... VALUES (?)` に 5 を渡して SELECT で 5 が返ることを確認しました(`tests/samples/sql7.cbl`)。Rust は生成コードの確認のみです。
+- 未了: EXEC CICS、`DESCRIBE`/SQLDA を使う完全な動的 SQL。

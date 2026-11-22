@@ -82,6 +82,8 @@ pub enum Stmt {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SqlKind {
     Exec,          // INSERT / UPDATE / DELETE / COMMIT など(結果の行は使わない)
+    Prep(String),  // PREPARE name FROM :var
+    ExecPrep(String), // EXECUTE name USING
     ExecDyn,       // EXECUTE IMMEDIATE :変数(SQL 文を変数の中身から実行。sql 欄に変数名)
     Select,        // SELECT ... INTO(先頭の1行を取る)
     Open(String),  // OPEN カーソル(問い合わせを実行して行を保持)
@@ -458,6 +460,21 @@ impl P {
                     }
                     None => Err("EXECUTE IMMEDIATE の SQL が無い".into()),
                 }
+            }
+            "PREPARE" => {
+                let name = cursor(toks.get(1))?;
+                match (up.get(2).map(|w| w.as_str()), toks.get(3)) {
+                    (Some("FROM"), Some(t)) if t.starts_with(':') => Ok(Stmt::Sql(SqlKind::Prep(name), ident(&t[1..]), vec![], vec![])),
+                    _ => Err("PREPARE は PREPARE 名 FROM :変数 の形のみ対応".into()),
+                }
+            }
+            "EXECUTE" => {
+                let name = cursor(toks.get(1))?;
+                let params = match up.iter().position(|w| w == "USING") {
+                    Some(u) => self.sql_text(&toks[u + 1..])?.1,
+                    None => vec![],
+                };
+                Ok(Stmt::Sql(SqlKind::ExecPrep(name), String::new(), params, vec![]))
             }
             "CLOSE" => Ok(Stmt::Sql(SqlKind::Close(cursor(toks.get(1))?), String::new(), vec![], vec![])),
             "SELECT" => {
@@ -3326,6 +3343,16 @@ fn emit(p: &Program, ss: &[Stmt], l: Lang, ind: usize, o: &mut String) {
                 match (kind, l) {
                     (SqlKind::Exec, Lang::Py) => o.push_str(&format!("{pad}_c, _r = SQL_HANDLER({sql:?}, [{}])\n{pad}self.{sc} = _c\n", plist(l))),
                     (SqlKind::Exec, Lang::Rs) => o.push_str(&format!("{pad}{{ let (c, _r) = sql_call({sql:?}, vec![{}]); self.{sc} = c; }}\n", plist(l))),
+                    (SqlKind::Prep(n), Lang::Py) => {
+                        let d = disp(p, &Expr::Var(sql.clone()), l);
+                        o.push_str(&format!("{pad}self._prep[{n:?}] = str({d}).strip()\n{pad}self.{sc} = 0\n"))
+                    }
+                    (SqlKind::Prep(n), Lang::Rs) => {
+                        let d = disp(p, &Expr::Var(sql.clone()), l);
+                        o.push_str(&format!("{pad}{{ let q = format!(\"{{}}\", {d}); self.sql_prep.insert({n:?}.to_string(), q.trim().to_string()); self.{sc} = 0; }}\n"))
+                    }
+                    (SqlKind::ExecPrep(n), Lang::Py) => o.push_str(&format!("{pad}if {n:?} in self._prep:\n{pad}    _c, _r = SQL_HANDLER(self._prep[{n:?}], [{}])\n{pad}    self.{sc} = _c\n{pad}else:\n{pad}    self.{sc} = -518\n", plist(l))),
+                    (SqlKind::ExecPrep(n), Lang::Rs) => o.push_str(&format!("{pad}match self.sql_prep.get({n:?}).cloned() {{ Some(q) => {{ let (c, _r) = sql_call(&q, vec![{}]); self.{sc} = c; }} None => {{ self.{sc} = -518; }} }}\n", plist(l))),
                     (SqlKind::ExecDyn, Lang::Py) => {
                         let d = disp(p, &Expr::Var(sql.clone()), l);
                         o.push_str(&format!("{pad}_c, _r = SQL_HANDLER(str({d}).strip(), [])\n{pad}self.{sc} = _c\n"))
@@ -3437,7 +3464,7 @@ pub fn to_python(p: &Program) -> String {
         }
         o += "}\n\n\n";
     }
-    o += "class State:\n    def __init__(self):\n        self.out = \"\"\n        self.goto = \"\"\n        self._fh = {}\n        self._sort_buf = []\n        self._sort_pos = 0\n        self._cur = {}\n";
+    o += "class State:\n    def __init__(self):\n        self.out = \"\"\n        self.goto = \"\"\n        self._fh = {}\n        self._sort_buf = []\n        self._sort_pos = 0\n        self._cur = {}\n        self._prep = {}\n";
     for v in &p.vars {
         let init = init_value(v);
         let val = if v.occurs > 0 { format!("[{init}] * {}", v.occurs) } else { init };
@@ -3490,8 +3517,8 @@ pub fn to_rust(p: &Program) -> String {
     for f in &p.files {
         o += &format!("    fr_{0}: Option<std::io::BufReader<std::fs::File>>,\n    fw_{0}: Option<std::fs::File>,\n", f.name);
     }
-    o += "    sort_buf: Vec<String>,\n    sort_pos: usize,\n    sql_cur: std::collections::HashMap<String, (Vec<Vec<String>>, usize)>,\n";
-    o += "}\n\nimpl State {\n    fn new(ext: Option<Ext>) -> Self {\n        State {\n            out: String::new(),\n            goto: String::new(),\n            ext,\n            sort_buf: vec![],\n            sort_pos: 0,\n            sql_cur: Default::default(),\n";
+    o += "    sort_buf: Vec<String>,\n    sort_pos: usize,\n    sql_cur: std::collections::HashMap<String, (Vec<Vec<String>>, usize)>,\n    sql_prep: std::collections::HashMap<String, String>,\n";
+    o += "}\n\nimpl State {\n    fn new(ext: Option<Ext>) -> Self {\n        State {\n            out: String::new(),\n            goto: String::new(),\n            ext,\n            sort_buf: vec![],\n            sort_pos: 0,\n            sql_cur: Default::default(),\n            sql_prep: Default::default(),\n";
     for v in &p.vars {
         let init = init_value(v);
         let one = if v.numeric { init } else { format!("{init}.to_string()") };
@@ -3833,6 +3860,23 @@ mod tests {
             }
         }
         assert!(to_rust(&p).contains("q.trim()"));
+    }
+
+    #[test]
+    fn prepare_execute_using() {
+        let p = parse(&std::fs::read_to_string("tests/samples/sql7.cbl").unwrap(), false);
+        let py = to_python(&p);
+        assert!(!py.contains("TODO(COBOL_to)"), "{py}");
+        let dir = std::env::temp_dir().join("cobol_to_sql7");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("sql7.py"), &py).unwrap();
+        let _ = std::fs::remove_file(dir.join("t.db"));
+        let out = std::process::Command::new("python").current_dir(&dir).args(["-c", "import sql7;print(repr(sql7.run()))"]).env("COBOL_SQL_DB", dir.join("t.db")).output();
+        if let Ok(o) = out {
+            let s = String::from_utf8_lossy(&o.stdout).to_string();
+            assert!(o.status.success() && s.contains("'5"), "{s} {}", String::from_utf8_lossy(&o.stderr));
+        }
+        assert!(to_rust(&p).contains("sql_prep"));
     }
 
     #[test]
