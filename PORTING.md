@@ -353,3 +353,16 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
 ## 2026-11-22 追記: toMap と groupingBy の下流コレクター (JA/EN)
 **日本語**: `Collectors.toMap(k, v)`、`groupingBy` の下流 `counting`/`summingInt`(Long・Double)/`mapping(f, toList()|toSet())` を Python へ変換。生成した Python を単体試験で実行して結果の一致を確認(21件成功)。括弧の数え間違い(ラムダ内の `)` を削っていた)も直した。**未了**: `toMap` の重複キー結合、`averagingInt`、`partitioningBy`、匿名クラス、Rust 側のメソッド本体、Spring PetClinic での通し試験。
 **English**: `Collectors.toMap(k, v)` and the `groupingBy` downstream collectors `counting`, `summingInt` (Long/Double) and `mapping(f, toList()|toSet())` now convert to Python; the unit test runs the generated code and checks the result (21 tests pass). Also fixed a paren-stripping bug that ate the `)` of a lambda. **Open**: `toMap` merge function, `averagingInt`, `partitioningBy`, anonymous classes, Rust-side method bodies, an end-to-end run on Spring PetClinic.
+
+
+## 2026-11-22 現状と完成予定と課題 / Status, plan and issues
+
+### 日本語
+**現状**: COBOL・C・C++・Fortran・Java を、選んだ組み合わせ(Axum/Poem/FastAPI/RPoem/RPoRea × HTML5/CSS3/TypeScript/Bootstrap × MySQL/MariaDB/PostgreSQL/SQLite)のウェブアプリにするお助けロボット。`converters/cobol_to` と `converters/java_to` は COBOL_to・Java_to と同じ内容を取り込み(COBOL: SORT/MERGE/SEARCH/EXEC SQL 一式、Java: メソッド参照・Comparator・Collectors)、試験55件成功。`pl2pl c2rust`・`f2rust` で単純な C/C++/Fortran を Rust へ。
+**完成予定**: 元の COBOL_to / Java_to の削除(本人確認のうえ最後に)、Mac・iPhone 実機確認、COBOL→他 OS の COBOL の拡張、Kokkos の GPU 実行、メール到達の確認。
+**課題**: 取り込み版と元リポジトリを手で同期している(自動同期なし)。C++/Fortran の Rust 化は単純な範囲のみ。Rust 側の EXEC SQL は疑似ハンドラーでの検証にとどまる。
+
+### English
+**Status**: A helper robot that turns COBOL, C, C++, Fortran and Java into web apps in the mix you choose (Axum/Poem/FastAPI/RPoem/RPoRea x HTML5/CSS3/TypeScript/Bootstrap x MySQL/MariaDB/PostgreSQL/SQLite). `converters/cobol_to` and `converters/java_to` mirror COBOL_to and Java_to (COBOL: SORT/MERGE/SEARCH/EXEC SQL; Java: method references, Comparator, Collectors); 55 tests pass. `pl2pl c2rust` and `f2rust` rewrite simple C/C++/Fortran into Rust.
+**Planned**: deleting the original COBOL_to / Java_to (last, after the owner confirms), real Mac/iPhone checks, extending COBOL to other OSes, Kokkos on a GPU, a mail-arrival check.
+**Issues**: The vendored copies are synced by hand (no automatic sync). C++/Fortran to Rust covers only simple code. Rust-side EXEC SQL is verified only with a fake handler.
