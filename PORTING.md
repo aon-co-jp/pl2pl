@@ -400,3 +400,8 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
 - `EXEC SQL EXECUTE IMMEDIATE :変数 END-EXEC` に対応しました。SQL 文を変数の中身(前後の空白は除去)から実行し、SQLCODE を更新します(Python・Rust 両方)。文字列定数を直接渡す形は通常の SQL 文として扱います。
 - 試験は23件成功。生成した Python を実行し、CREATE・INSERT・SELECT の結果 `0` と `7` が出ることを確認しました(`tests/samples/sql6.cbl`)。Rust は生成コードの確認のみで、実行は未確認です。
 - 未了: PREPARE/EXECUTE(`?` の引数つき)、EXEC CICS。
+
+## 2026-11-23 追記: 複数メソッドを持つ無名クラス(日本語)
+- 無名クラスにメソッドが複数あるとき、これまでは最初の1つだけを出していましたが、**すべてのメソッドを Python クラスのメソッドとして出す**ようにしました(フィールドは各メソッドから見えます)。最初のメソッドは従来どおり `__call__` でも呼べます。
+- 単体テストは31件成功(`anonymous_class_multiple_methods`)。生成物の文字列確認までで、Python 実行の通し確認は未了です。
+- 未了: コレクション操作を含む Rust 本体、Spring PetClinic など実プロジェクトでの通し確認。

@@ -1217,8 +1217,51 @@ impl<'a> Tr<'a> {
                 }
             }
         }
-        if inner.iter().skip(rb + 1).any(|t| t.is("(")) {
-            self.c.notes.push(format!("匿名クラス new {short}(...) {{...}} はメソッドが複数あり、最初の1つだけを関数にした"));
+        // 2つ目以降のメソッド: `名前 ( 引数 ) { 本体 }` を順に拾う
+        let mut extra: Vec<(String, Vec<String>, Vec<Tok>)> = vec![];
+        {
+            let rest = &inner[(rb + 1).min(inner.len())..];
+            let mut k = 0;
+            while k < rest.len() {
+                let Some(l) = rest[k..].iter().position(|t| t.is("(")).map(|x| x + k) else { break };
+                if l == 0 || !matches!(&rest[l - 1], Tok::Id(_)) {
+                    break;
+                }
+                let (mut d, mut r) = (0, None);
+                for (q, t) in rest.iter().enumerate().skip(l) {
+                    if t.is("(") {
+                        d += 1;
+                    } else if t.is(")") {
+                        d -= 1;
+                        if d == 0 {
+                            r = Some(q);
+                            break;
+                        }
+                    }
+                }
+                let Some(r) = r else { break };
+                let Some(b0) = rest.iter().skip(r).position(|t| t.is("{")).map(|x| x + r) else { break };
+                let (mut dd, mut b1) = (0, rest.len());
+                for (q, t) in rest.iter().enumerate().skip(b0) {
+                    if t.is("{") {
+                        dd += 1;
+                    } else if t.is("}") {
+                        dd -= 1;
+                        if dd == 0 {
+                            b1 = q;
+                            break;
+                        }
+                    }
+                }
+                let Tok::Id(mn) = &rest[l - 1] else { break };
+                let ps: Vec<String> = crate::parse::split_top(&rest[l + 1..r], ",")
+                    .iter()
+                    .filter(|x| !x.is_empty())
+                    .filter_map(|x| x.iter().rev().find_map(|t| if let Tok::Id(n) = t { Some(n.clone()) } else { None }))
+                    .collect();
+                extra.push((snake(mn), ps, rest[b0 + 1..b1.min(rest.len())].to_vec()));
+                k = b1 + 1;
+            }
         }
         let params: Vec<String> = crate::parse::split_top(&inner[lp + 1..rp], ",")
             .iter()
@@ -1228,7 +1271,7 @@ impl<'a> Tr<'a> {
         let body: Vec<Tok> = inner[lb + 1..rb].to_vec();
         // フィールド(最初のメソッドより前の `型 名 = 初期値;`)があれば、状態を持つクラスにする
         let hdr = (0..lp).rev().find(|&k| inner[k].is(";") || inner[k].is("}")).map(|k| k + 1).unwrap_or(0);
-        if inner[..hdr].iter().any(|t| t.is(";")) {
+        if inner[..hdr].iter().any(|t| t.is(";")) || !extra.is_empty() {
             let mut inits: Vec<(String, String)> = vec![];
             let mut names: Vec<String> = vec![];
             for f in split_top(&inner[..hdr], ";") {
@@ -1278,6 +1321,28 @@ impl<'a> Tr<'a> {
             def.push(format!("    def {mname}(self{plist}):"));
             def.extend(lines);
             def.push(format!("    __call__ = {mname}"));
+            let fields_now = inits.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
+            for (en, eps, ebody) in &extra {
+                let saved2 = std::mem::replace(&mut self.c.fields, fields_now.iter().cloned().collect());
+                for p in eps {
+                    self.c.lambda_params.push(p.clone());
+                }
+                let mut el: Vec<String> = vec![];
+                {
+                    let mut sub = Tr { t: ebody, i: 0, c: &mut *self.c };
+                    sub.stmts(2, &mut el);
+                }
+                for _ in eps {
+                    self.c.lambda_params.pop();
+                }
+                self.c.fields = saved2;
+                if el.is_empty() {
+                    el.push("        pass".into());
+                }
+                let pl: String = eps.iter().map(|x| format!(", {}", snake(x))).collect();
+                def.push(format!("    def {en}(self{pl}):"));
+                def.extend(el);
+            }
             self.c.hoisted.extend(def);
             return e(format!("{cname}()"), "");
         }
@@ -2098,6 +2163,12 @@ print(s)
 {}", String::from_utf8_lossy(&o.stderr));
             assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "[3, 2, 1]", "{prog}");
         }
+    }
+    #[test]
+    fn anonymous_class_multiple_methods() {
+        let p = tb("Object o = new Object() { int n = 1; public int inc(int a) { return a + n; } public int dbl(int a) { return a * 2; } }; int r = o.dbl(4);");
+        assert!(p.contains("def inc(self, a):") && p.contains("def dbl(self, a):"), "{p}");
+        assert!(!p.contains("最初の1つだけ"), "{p}");
     }
     #[test]
     fn if_for_return() {
