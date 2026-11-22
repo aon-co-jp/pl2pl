@@ -391,3 +391,8 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
 - **実装**: `EXEC CICS SEND TEXT FROM(変数 または '文字列')` は表示に、`RETURN` と `ABEND` は終了にします。`READ FILE`・`XCTL`・`SEND MAP` など、ほかの命令は黙って落とさず「未対応」の TODO として残します。
 - 試験は25件成功(`exec_cics_minimal`)。生成した Python の文字列確認までで、画面(BMS マップ)の再現はしていません。
 - 未了: SEND/RECEIVE MAP(BMS)、READ/WRITE FILE、XCTL/LINK、COMMAREA。
+
+## 2026-11-23 追記: Rust 本体の List 操作(日本語)
+- Rust(Poem / RPoem)側のメソッド本体で、`List<Integer> xs = new ArrayList<>();`(`Vec<i32>` になる。`Integer` などの箱型は基本型に直す)、`xs.add(x);`(`push`)、`xs.get(i)`(添字アクセス)、拡張 for `for (int x : xs)` を変換できるようにしました。`xs.size()` は従来どおり `len()` です。
+- 単体テストは32件成功(`list_operations`、生成された Rust の文字列確認)。生成 Rust のコンパイル確認(`tests/run-rust.sh`)はこの追加分では未実施です。
+- 未了: Map や Stream を含む Rust 本体、Spring PetClinic など実プロジェクトでの通し確認。
