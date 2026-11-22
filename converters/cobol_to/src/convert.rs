@@ -38,8 +38,8 @@ pub enum Loop {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inspect {
-    Tally(String, Expr),
-    Replace { first: bool, from: Expr, to: Expr },
+    Tally(String, Option<Expr>, bool), // カウンタ, パターン(None=CHARACTERS), LEADING か
+    Replace { first: bool, lead: bool, from: Expr, to: Expr },
     Convert(Expr, Expr),
 }
 
@@ -1284,19 +1284,30 @@ impl P {
                             self.next();
                             let c = ident(&self.next().ok_or("カウンタが無い")?.s);
                             self.used.insert(c.clone());
-                            if self.word() != "FOR" || self.up(1) != "ALL" {
-                                return Err("TALLYING は FOR ALL のみ対応".into());
+                            if self.word() != "FOR" {
+                                return Err("TALLYING は FOR ALL / LEADING / CHARACTERS のみ対応".into());
                             }
                             self.next();
-                            self.next();
-                            Stmt::Inspect(tg, Inspect::Tally(c, self.operand()?))
+                            match self.word().as_str() {
+                                "ALL" | "LEADING" => {
+                                    let lead = self.word() == "LEADING";
+                                    self.next();
+                                    Stmt::Inspect(tg, Inspect::Tally(c, Some(self.operand()?), lead))
+                                }
+                                "CHARACTERS" => {
+                                    self.next();
+                                    Stmt::Inspect(tg, Inspect::Tally(c, None, false))
+                                }
+                                _ => return Err("TALLYING は FOR ALL / LEADING / CHARACTERS のみ対応".into()),
+                            }
                         }
                         "REPLACING" => {
                             self.next();
-                            let first = match self.word().as_str() {
-                                "ALL" => false,
-                                "FIRST" => true,
-                                _ => return Err("REPLACING は ALL / FIRST のみ対応".into()),
+                            let (first, lead) = match self.word().as_str() {
+                                "ALL" => (false, false),
+                                "FIRST" => (true, false),
+                                "LEADING" => (false, true),
+                                _ => return Err("REPLACING は ALL / FIRST / LEADING のみ対応".into()),
                             };
                             self.next();
                             let from = self.operand()?;
@@ -1305,7 +1316,7 @@ impl P {
                             }
                             self.next();
                             let to = self.operand()?;
-                            Stmt::Inspect(tg, Inspect::Replace { first, from, to })
+                            Stmt::Inspect(tg, Inspect::Replace { first, lead, from, to })
                         }
                         "CONVERTING" => {
                             self.next();
@@ -2468,10 +2479,12 @@ fn emit(p: &Program, ss: &[Stmt], l: Lang, ind: usize, o: &mut String) {
                 let t = format!("self.{}", canon(p, tg));
                 let s = |e: &Expr| sx(p, e, l).0;
                 match (op, l) {
-                    (Inspect::Tally(c, pat), Lang::Py) => o.push_str(&format!("{pad}self.{} += str({t}).count(str({}))\n", canon(p, c), s(pat))),
-                    (Inspect::Tally(c, pat), Lang::Rs) => o.push_str(&format!("{pad}self.{} += format!(\"{{}}\", {t}).matches(format!(\"{{}}\", {}).as_str()).count() as i64;\n", canon(p, c), s(pat))),
-                    (Inspect::Replace { first, from, to }, Lang::Py) => o.push_str(&format!("{pad}{t} = str({t}).replace(str({}), str({}){})\n", s(from), s(to), if *first { ", 1" } else { "" })),
-                    (Inspect::Replace { first, from, to }, Lang::Rs) => o.push_str(&format!(
+                    (Inspect::Tally(c, pat, lead), Lang::Py) => o.push_str(&format!("{pad}self.{} += {}\n", canon(p, c), tally_expr(true, &format!("str({t})"), pat.as_ref().map(|e| s(e)).as_deref(), *lead))),
+                    (Inspect::Tally(c, pat, lead), Lang::Rs) => o.push_str(&format!("{pad}self.{} += {};\n", canon(p, c), tally_expr(false, &format!("format!(\"{{}}\", {t})"), pat.as_ref().map(|e| s(e)).as_deref(), *lead))),
+                    (Inspect::Replace { lead: true, from, to, .. }, Lang::Py) => o.push_str(&format!("{pad}{t} = {}\n", replace_lead(true, &format!("str({t})"), &s(from), &s(to)))),
+                    (Inspect::Replace { lead: true, from, to, .. }, Lang::Rs) => o.push_str(&format!("{pad}{t} = {};\n", replace_lead(false, &format!("{t}.clone()"), &s(from), &s(to)))),
+                    (Inspect::Replace { first, from, to, .. }, Lang::Py) => o.push_str(&format!("{pad}{t} = str({t}).replace(str({}), str({}){})\n", s(from), s(to), if *first { ", 1" } else { "" })),
+                    (Inspect::Replace { first, from, to, .. }, Lang::Rs) => o.push_str(&format!(
                         "{pad}{t} = {t}.{}(format!(\"{{}}\", {}).as_str(), format!(\"{{}}\", {}).as_str(){});\n",
                         if *first { "replacen" } else { "replace" },
                         s(from),
@@ -2499,8 +2512,12 @@ fn emit(p: &Program, ss: &[Stmt], l: Lang, ind: usize, o: &mut String) {
                     }
                     o.push_str(&format!("{pad}_m = _t[_s:_e]\n"));
                     match op {
-                        Inspect::Tally(c, pat) => o.push_str(&format!("{pad}self.{} += _m.count(str({}))\n", canon(p, c), s(pat))),
-                        Inspect::Replace { first, from, to } => {
+                        Inspect::Tally(c, pat, lead) => o.push_str(&format!("{pad}self.{} += {}\n", canon(p, c), tally_expr(true, "_m", pat.as_ref().map(|e| s(e)).as_deref(), *lead))),
+                        Inspect::Replace { lead: true, from, to, .. } => {
+                            o.push_str(&format!("{pad}_m = {}\n", replace_lead(true, "_m", &s(from), &s(to))));
+                            o.push_str(&format!("{pad}{t} = _t[:_s] + _m + _t[_e:]\n"));
+                        }
+                        Inspect::Replace { first, from, to, .. } => {
                             o.push_str(&format!("{pad}_m = _m.replace(str({}), str({}){})\n", s(from), s(to), if *first { ", 1" } else { "" }));
                             o.push_str(&format!("{pad}{t} = _t[:_s] + _m + _t[_e:]\n"));
                         }
@@ -2519,8 +2536,12 @@ fn emit(p: &Program, ss: &[Stmt], l: Lang, ind: usize, o: &mut String) {
                     }
                     o.push_str(&format!("{pad}    let m0 = &t0[s0..e0];\n"));
                     match op {
-                        Inspect::Tally(c, pat) => o.push_str(&format!("{pad}    self.{} += m0.matches(format!(\"{{}}\", {}).as_str()).count() as i64;\n", canon(p, c), s(pat))),
-                        Inspect::Replace { first, from, to } => o.push_str(&format!(
+                        Inspect::Tally(c, pat, lead) => o.push_str(&format!("{pad}    self.{} += {};\n", canon(p, c), tally_expr(false, "m0.to_string()", pat.as_ref().map(|e| s(e)).as_deref(), *lead))),
+                        Inspect::Replace { lead: true, from, to, .. } => o.push_str(&format!(
+                            "{pad}    let m1 = {}; {t} = format!(\"{{}}{{}}{{}}\", &t0[..s0], m1, &t0[e0..]);\n",
+                            replace_lead(false, "m0.to_string()", &s(from), &s(to))
+                        )),
+                        Inspect::Replace { first, from, to, .. } => o.push_str(&format!(
                             "{pad}    let m1 = m0.{}(format!(\"{{}}\", {}).as_str(), format!(\"{{}}\", {}).as_str(){}); {t} = format!(\"{{}}{{}}{{}}\", &t0[..s0], m1, &t0[e0..]);\n",
                             if *first { "replacen" } else { "replace" },
                             s(from),
@@ -2840,6 +2861,28 @@ fn expand_rec(src: &str, free: bool, dirs: &[std::path::PathBuf], depth: usize) 
     out
 }
 
+/// `INSPECT ... TALLYING` の数え上げ式(`x` は文字列式、`pat` が None なら CHARACTERS)
+fn tally_expr(py: bool, x: &str, pat: Option<&str>, lead: bool) -> String {
+    match (py, pat, lead) {
+        (true, None, _) => format!("len({x})"),
+        (true, Some(p), false) => format!("{x}.count(str({p}))"),
+        (true, Some(p), true) => format!("next((_k for _k in range(len({x}) // max(len(str({p})), 1) + 1) if not {x}.startswith(str({p}), _k * len(str({p})))), 0)"),
+        (false, None, _) => format!("({x}).chars().count() as i64"),
+        (false, Some(p), false) => format!("({x}).matches(format!(\"{{}}\", {p}).as_str()).count() as i64"),
+        (false, Some(p), true) => format!("{{ let x0 = {x}; let p0 = format!(\"{{}}\", {p}); let mut n = 0i64; let mut i = 0usize; while !p0.is_empty() && x0[i..].starts_with(p0.as_str()) {{ n += 1; i += p0.len(); }} n }}"),
+    }
+}
+
+/// `INSPECT ... REPLACING LEADING a BY b`: 先頭から連続する a を b に置き換えた文字列の式
+fn replace_lead(py: bool, x: &str, from: &str, to: &str) -> String {
+    if py {
+        let n = tally_expr(true, x, Some(from), true);
+        format!("(str({to}) * {n} + {x}[{n} * len(str({from})):])")
+    } else {
+        format!("{{ let x0 = {x}; let f0 = format!(\"{{}}\", {from}); let t0 = format!(\"{{}}\", {to}); let mut n = 0usize; let mut i = 0usize; while !f0.is_empty() && x0[i..].starts_with(f0.as_str()) {{ n += 1; i += f0.len(); }} format!(\"{{}}{{}}\", t0.repeat(n), &x0[i..]) }}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2940,6 +2983,16 @@ mod tests {
         assert!(p.stmts.iter().any(|s| matches!(s, Stmt::InspectScoped(..))), "{:?}", p.stmts);
         assert!(to_python(&p).contains("_t.find(_a)"));
         assert!(to_rust(&p).contains("t0.find(a0.as_str())"));
+    }
+
+    #[test]
+    fn inspect_leading_and_characters() {
+        let src = "       PROGRAM-ID. I.\n       DATA DIVISION.\n       WORKING-STORAGE SECTION.\n       01 T PIC X(9) VALUE \"000A00B00\".\n       01 N PIC 99 VALUE 0.\n       PROCEDURE DIVISION.\n           INSPECT T TALLYING N FOR LEADING \"0\".\n           INSPECT T TALLYING N FOR CHARACTERS.\n           INSPECT T REPLACING LEADING \"0\" BY \" \".\n           STOP RUN.\n";
+        let p = parse(src, false);
+        assert!(!p.stmts.iter().any(|s| matches!(s, Stmt::Todo(_))), "{:?}", p.stmts);
+        let py = to_python(&p);
+        assert!(py.contains("startswith") && py.contains("len(str("), "{py}");
+        assert!(to_rust(&p).contains("starts_with"));
     }
     #[test]
     fn on_size_error_branches() {
