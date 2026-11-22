@@ -15,3 +15,16 @@
 
 方針: 新しい REST は作らない(Connect/gRPC)、秘密は書かない、未対応は TODO で残し黙って落とさない、本物で確認してから完了と書く。
 Policy: no new REST (Connect/gRPC), never write secrets, keep unsupported items as TODO instead of dropping them, verify on real systems before saying done.
+
+
+## 2026-11-22 更新: Collectors 対応の完了と残課題 / Update: Collectors done, what remains
+
+### 日本語
+**現状**: Collectors の対応が揃いました: `toList`/`toSet`/`joining`/`toMap`(重複キーの結合関数つき)/`groupingBy`(下流 `counting`・`summingInt`・`mapping`)/`partitioningBy`(`counting` つき)/`averagingInt`。メソッド参照、`Comparator`(`comparing`/`thenComparing`/`reversed`)も対応済み。生成した Python を単体試験で実際に動かして結果を確認(Java_to 23件・pl2pl 55件成功)。
+**未了(残る課題)**: 匿名クラス、Rust 側のメソッド本体(今は単純な return のみ)、Spring PetClinic など実プロジェクトでの通し試験、`groupingBy` のその他の下流コレクター(`summingDouble` 以外の `reducing` など)。
+**課題**: 中間結果を list で即時評価するため、無限・遅延ストリームは対象外。実プロジェクトでの検証が未了。
+
+### English
+**Status**: Collectors coverage is now complete for the common cases: `toList`/`toSet`/`joining`/`toMap` (with a merge function)/`groupingBy` (downstream `counting`, `summingInt`, `mapping`)/`partitioningBy` (with `counting`)/`averagingInt`. Method references and `Comparator` (`comparing`/`thenComparing`/`reversed`) are supported too. Unit tests run the generated Python and check results (Java_to 23, pl2pl 55 pass).
+**Still open**: anonymous classes, Rust-side method bodies (currently a simple return only), end-to-end runs on real projects such as Spring PetClinic, and other `groupingBy` downstream collectors (`reducing`, etc.).
+**Issues**: intermediate results are evaluated eagerly as lists, so infinite or lazy streams are out of scope; real-project verification is not done.

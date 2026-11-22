@@ -1382,11 +1382,29 @@ impl<'a> Tr<'a> {
                 let sep = if sep.is_empty() { "\"\"".to_string() } else { sep };
                 e(format!("{sep}.join(map(str, {r}))"), "String")
             }
+            ("collect", 1) if !self.user_method(name) && a[0].starts_with("Collectors.partitioning_by(") => {
+                let inner = a[0].trim_start_matches("Collectors.partitioning_by(").strip_suffix(')').unwrap_or("").to_string();
+                let (f, counting) = match inner.find(", Collectors.counting(") {
+                    Some(i) => (inner[..i].to_string(), true),
+                    None => (inner.clone(), false),
+                };
+                let v = |b: &str| if counting { format!("len([x for x in _l if bool(_f(x)) == {b}])") } else { format!("[x for x in _l if bool(_f(x)) == {b}]") };
+                e(format!("(lambda _l, _f: {{False: {}, True: {}}})({r}, {f})", v("False"), v("True")), "")
+            }
+            ("collect", 1) if !self.user_method(name) && (a[0].starts_with("Collectors.averaging_int(") || a[0].starts_with("Collectors.averaging_double(") || a[0].starts_with("Collectors.averaging_long(")) => {
+                let f = a[0].split_once('(').map(|x| x.1).unwrap_or("").strip_suffix(')').unwrap_or("").to_string();
+                e(format!("(lambda _l, _f: (sum(map(_f, _l)) / len(_l)) if _l else 0.0)({r}, {f})"), "double")
+            }
             ("collect", 1) if !self.user_method(name) && a[0].starts_with("Collectors.to_map(") => {
                 let inner = a[0].trim_start_matches("Collectors.to_map(").strip_suffix(')').unwrap_or("").to_string();
-                let mut it = inner.splitn(2, ", ");
-                let (k, v) = (it.next().unwrap_or("").to_string(), it.next().unwrap_or("").to_string());
-                e(format!("(lambda _l, _k, _v: {{_k(x): _v(x) for x in _l}})({r}, {k}, {v})"), "")
+                let parts: Vec<&str> = inner.splitn(3, ", ").collect();
+                let (k, v) = (parts.first().copied().unwrap_or("").to_string(), parts.get(1).copied().unwrap_or("").to_string());
+                if let Some(m) = parts.get(2) {
+                    // 重複キーは結合関数で畳む
+                    e(format!("(lambda _l, _k, _v, _m: __import__(\"functools\").reduce(lambda d, x: {{**d, _k(x): (_m(d[_k(x)], _v(x)) if _k(x) in d else _v(x))}}, _l, {{}}))({r}, {k}, {v}, {m})"), "")
+                } else {
+                    e(format!("(lambda _l, _k, _v: {{_k(x): _v(x) for x in _l}})({r}, {k}, {v})"), "")
+                }
             }
             ("collect", 1) if !self.user_method(name) && a[0].starts_with("Collectors.grouping_by(") => {
                 let inner = a[0].trim_start_matches("Collectors.grouping_by(").strip_suffix(')').unwrap_or("").to_string();
@@ -1803,6 +1821,36 @@ print(m, t, u)
             assert!(o.status.success(), "{prog}
 {}", String::from_utf8_lossy(&o.stderr));
             assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "{'bb': 2, 'a': 1, 'cc': 2} {2: 4, 1: 1} {2: ['BB', 'CC'], 1: ['A']}", "{prog}");
+        }
+    }
+    #[test]
+    fn partitioning_and_averaging() {
+        let p = tb("List<String> xs = new ArrayList<>(); Map<Boolean, List<String>> a = xs.stream().collect(Collectors.partitioningBy(x -> x.length() > 1)); Map<Boolean, Long> b = xs.stream().collect(Collectors.partitioningBy(x -> x.length() > 1, Collectors.counting())); double c = xs.stream().collect(Collectors.averagingInt(String::length));");
+        assert!(!p.contains("未対応"), "{p}");
+        let p = p.lines().map(|l| l.trim_start()).collect::<Vec<_>>().join("
+");
+        let prog = format!("{}
+print(a, b, c)
+", p.replacen("xs = []", "xs = [\"bb\", \"a\", \"cc\"]", 1));
+        if let Ok(o) = std::process::Command::new("python").args(["-c", &prog]).output() {
+            assert!(o.status.success(), "{prog}
+{}", String::from_utf8_lossy(&o.stderr));
+            assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "{False: ['a'], True: ['bb', 'cc']} {False: 1, True: 2} 1.6666666666666667", "{prog}");
+        }
+    }
+    #[test]
+    fn to_map_merge() {
+        let p = tb("List<String> xs = new ArrayList<>(); Map<Integer, Integer> m = xs.stream().collect(Collectors.toMap(String::length, String::length, Integer::sum));");
+        assert!(!p.contains("未対応"), "{p}");
+        let p = p.lines().map(|l| l.trim_start()).collect::<Vec<_>>().join("
+");
+        let prog = format!("{}
+print(m)
+", p.replacen("xs = []", "xs = [\"bb\", \"a\", \"cc\"]", 1));
+        if let Ok(o) = std::process::Command::new("python").args(["-c", &prog]).output() {
+            assert!(o.status.success(), "{prog}
+{}", String::from_utf8_lossy(&o.stderr));
+            assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "{2: 4, 1: 1}", "{prog}");
         }
     }
     #[test]
