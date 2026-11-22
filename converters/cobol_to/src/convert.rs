@@ -88,6 +88,7 @@ pub struct Var {
     pub scale: u32,
     pub width: usize,
     pub occurs: usize,
+    pub usage: String, // ""(DISPLAY) / "COMP-3"(パック) / "COMP"(2進)
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -1980,6 +1981,7 @@ pub fn parse(src: &str, free: bool) -> Program {
             let mut has_pic = false;
             let mut occurs = 0usize;
             let mut index_names: Vec<String> = vec![];
+            let mut usage = String::new();
             let mut redef: Option<String> = None;
             let mut x = 0;
             while x < seg.len() {
@@ -2036,6 +2038,8 @@ pub fn parse(src: &str, free: bool) -> Program {
                             y += 1;
                         }
                     }
+                    "COMP-3" | "COMPUTATIONAL-3" | "PACKED-DECIMAL" => usage = "COMP-3".into(),
+                    "COMP" | "COMPUTATIONAL" | "COMP-4" | "COMPUTATIONAL-4" | "COMP-5" | "COMPUTATIONAL-5" | "BINARY" => usage = "COMP".into(),
                     "REDEFINES" => redef = seg.get(x + 1).map(|s| s.trim_end_matches('.').to_string()),
                     _ => {}
                 }
@@ -2090,12 +2094,15 @@ pub fn parse(src: &str, free: bool) -> Program {
                     }
                 }
                 if !aliased && !p.vars.iter().any(|v| v.name == vname) {
-                    p.vars.push(Var { name: vname.clone(), numeric, init, decimal: scale > 0, undeclared: false, scale, width, occurs });
+                    p.vars.push(Var { name: vname.clone(), numeric, init, decimal: scale > 0, undeclared: false, scale, width, occurs, usage: usage.clone() });
                 }
                 last_var = Some(ident(&vname));
                 if let Some(fi) = cur_fd {
                     if !aliased {
                         p.files[fi].fields.push(ident(&vname));
+                        if !usage.is_empty() {
+                            p.notes.push(format!("{name}: {usage} 項目だが、ファイルのレコードでは桁の文字(固定長テキスト)として入出力する(パック/2進のバイト列は扱わない)"));
+                        }
                     }
                 }
             }
@@ -3367,6 +3374,25 @@ mod tests {
         assert!(!to_python(&p).contains("TODO(COBOL_to)"));
         assert!(to_python(&p).contains("reversed(["));
         assert!(to_rust(&p).contains("sort_by"));
+    }
+
+    #[test]
+    fn usage_comp3_and_comp_recorded() {
+        let src = std::fs::read_to_string("tests/samples/comp3.cbl").unwrap();
+        let p = parse(&src, false);
+        let u = |n: &str| p.vars.iter().find(|v| v.name == n).map(|v| v.usage.clone()).unwrap_or_default();
+        assert_eq!(u("A"), "COMP-3");
+        assert_eq!(u("D"), "COMP-3");
+        assert_eq!(u("F"), "COMP-3");
+        assert_eq!(u("B"), "COMP");
+        assert_eq!(u("C"), "COMP");
+        assert_eq!(u("E"), "COMP");
+        assert_eq!(u("G"), "");
+        assert!(!to_python(&p).contains("TODO(COBOL_to)"));
+        // ファイルのレコードに入ると、桁の文字として扱う旨の注意書きが出る
+        let fsrc = "       PROGRAM-ID. P.\n       ENVIRONMENT DIVISION.\n       INPUT-OUTPUT SECTION.\n       FILE-CONTROL.\n           SELECT F1 ASSIGN TO \"x.dat\".\n       DATA DIVISION.\n       FILE SECTION.\n       FD F1.\n       01 R1.\n          05 AMT PIC S9(5)V99 COMP-3.\n       PROCEDURE DIVISION.\n           STOP RUN.\n";
+        let pf = parse(fsrc, false);
+        assert!(pf.notes.iter().any(|n| n.contains("AMT") && n.contains("COMP-3")), "{:?}", pf.notes);
     }
 
     #[test]
