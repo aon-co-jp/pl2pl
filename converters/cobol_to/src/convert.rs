@@ -319,14 +319,25 @@ impl P {
                     j += 1;
                 }
                 let name: String = chars[i + 1..j].iter().collect::<String>().trim_end_matches('-').to_string();
-                if j < chars.len() && chars[j] == ':' {
-                    return Err("指示子変数(:変数:指示子)は未対応".into());
-                }
                 let id = ident(&name);
                 self.used.insert(id.clone());
-                params.push(id);
+                let mut consumed = 1 + name.chars().count();
+                if j < chars.len() && chars[j] == ':' && j + 1 < chars.len() && chars[j + 1].is_alphabetic() {
+                    // 指示変数 :変数:指示変数(負なら NULL を渡す)
+                    let mut k = j + 1;
+                    while k < chars.len() && (chars[k].is_alphanumeric() || chars[k] == '-' || chars[k] == '_') {
+                        k += 1;
+                    }
+                    let iname: String = chars[j + 1..k].iter().collect::<String>().trim_end_matches('-').to_string();
+                    let iid = ident(&iname);
+                    self.used.insert(iid.clone());
+                    consumed += 1 + iname.chars().count();
+                    params.push(format!("{id}:{iid}"));
+                } else {
+                    params.push(id);
+                }
                 out.push('?');
-                i = i + 1 + name.chars().count();
+                i += consumed;
             } else {
                 out.push(c);
                 i += 1;
@@ -343,8 +354,12 @@ impl P {
                 continue;
             }
             let n = t.strip_prefix(':').ok_or("INTO には :変数 を書く")?;
-            if n.contains(':') {
-                return Err("指示子変数(:変数:指示子)は未対応".into());
+            if let Some((a, b)) = n.split_once(':') {
+                let (ia, ib) = (ident(a), ident(b));
+                self.used.insert(ia.clone());
+                self.used.insert(ib.clone());
+                v.push(format!("{ia}:{ib}"));
+                continue;
             }
             let id = ident(n);
             self.used.insert(id.clone());
@@ -3208,8 +3223,19 @@ fn emit(p: &Program, ss: &[Stmt], l: Lang, ind: usize, o: &mut String) {
                     params
                         .iter()
                         .map(|n| {
-                            let d = disp(p, &Expr::Var(n.clone()), lang);
-                            if lang == Lang::Py { format!("str({d})") } else { format!("format!(\"{{}}\", {d})") }
+                            let (vn, ind) = match n.split_once(':') {
+                                Some((a, b)) => (a, Some(b)),
+                                None => (n.as_str(), None),
+                            };
+                            let d = disp(p, &Expr::Var(vn.to_string()), lang);
+                            let base = if lang == Lang::Py { format!("str({d})") } else { format!("format!(\"{{}}\", {d})") };
+                            match ind {
+                                Some(ib) => {
+                                    let ic = canon(p, ib);
+                                    if lang == Lang::Py { format!("(SQL_NULL if self.{ic} < 0 else {base})") } else { format!("(if self.{ic} < 0 {{ SQL_NULL.to_string() }} else {{ {base} }})") }
+                                }
+                                None => base,
+                            }
                         })
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -3217,16 +3243,30 @@ fn emit(p: &Program, ss: &[Stmt], l: Lang, ind: usize, o: &mut String) {
                 // 結果の1行から変数へ代入する文
                 let assigns = |row: &str, lang: Lang| -> String {
                     let mut a = String::new();
-                    for (i, n) in into.iter().enumerate() {
+                    for (i, n0) in into.iter().enumerate() {
+                        let (n, ind) = match n0.split_once(':') {
+                            Some((a, b)) => (a, Some(b)),
+                            None => (n0.as_str(), None),
+                        };
                         let c = canon(p, n);
                         let (numeric, scale) = var_of(p, n).map(|v| (v.numeric, v.scale)).unwrap_or((true, 0));
                         match lang {
                             Lang::Py => {
-                                let src = format!("({row}[{i}] if len({row}) > {i} else \"\")");
+                                let raw = format!("({row}[{i}] if len({row}) > {i} else \"\")");
+                                if let Some(ib) = ind {
+                                    a += &format!("{pad}    self.{} = -1 if {raw} == SQL_NULL else 0
+", canon(p, ib));
+                                }
+                                let src = format!("(\"\" if {raw} == SQL_NULL else {raw})");
                                 a += &if numeric { format!("{pad}    self.{c} = _sqlnum({src}, {scale})\n") } else { format!("{pad}    self.{c} = str({src})\n") };
                             }
                             Lang::Rs => {
-                                let src = format!("{row}.get({i}).map(|x| x.as_str()).unwrap_or(\"\")");
+                                let raw = format!("{row}.get({i}).map(|x| x.as_str()).unwrap_or(\"\")");
+                                if let Some(ib) = ind {
+                                    a += &format!("{pad}    self.{} = if {raw} == SQL_NULL {{ -1 }} else {{ 0 }};
+", canon(p, ib));
+                                }
+                                let src = format!("(if {raw} == SQL_NULL {{ \"\" }} else {{ {raw} }})");
                                 a += &if numeric { format!("{pad}    self.{c} = sql_num({src}, {scale});\n") } else { format!("{pad}    self.{c} = {src}.to_string();\n") };
                             }
                         }
@@ -3311,7 +3351,8 @@ pub fn to_python(p: &Program) -> String {
     o += "\nEXTERNAL = {}  # CALL \"NAME\" の呼び先: EXTERNAL[\"NAME\"] = callable(*args)\n\n\n";
     if p.uses_sql {
         o += "from decimal import Decimal as _Dec, ROUND_DOWN as _RD\n\n_SQLDB = []\n\n\n";
-        o += "def _sql_default(sql, params):\n    import sqlite3\n    if not _SQLDB:\n        _SQLDB.append(sqlite3.connect(os.environ.get(\"COBOL_SQL_DB\", \":memory:\"), isolation_level=None))\n    cx = _SQLDB[0]\n    head = sql.split(None, 1)[0].upper() if sql.strip() else \"\"\n    try:\n        if head in (\"COMMIT\", \"ROLLBACK\"):\n            if cx.in_transaction:\n                cx.execute(head)\n            return 0, []\n        cur = cx.execute(sql, params)\n        rows = [[\"\" if v is None else str(v) for v in r] for r in cur.fetchall()] if cur.description else []\n        return 0, rows\n    except sqlite3.Error:\n        return -1, []\n\n\n";
+        o += "def _sql_default(sql, params):\n    import sqlite3\n    if not _SQLDB:\n        _SQLDB.append(sqlite3.connect(os.environ.get(\"COBOL_SQL_DB\", \":memory:\"), isolation_level=None))\n    cx = _SQLDB[0]\n    head = sql.split(None, 1)[0].upper() if sql.strip() else \"\"\n    try:\n        if head in (\"COMMIT\", \"ROLLBACK\"):\n            if cx.in_transaction:\n                cx.execute(head)\n            return 0, []\n        cur = cx.execute(sql, [None if x == SQL_NULL else x for x in params])\n        rows = [[SQL_NULL if v is None else str(v) for v in r] for r in cur.fetchall()] if cur.description else []\n        return 0, rows\n    except sqlite3.Error:\n        return -1, []\n\n\n";
+        o += "SQL_NULL = \"\\x00NULL\"  # NULL を表す文字列(指示変数が負のとき渡す/NULL の列で返る)\n\n";
         o += "SQL_HANDLER = _sql_default  # 差し替え可: SQL_HANDLER(sql, params) -> (SQLCODE, 行のリスト)。標準は sqlite3(環境変数 COBOL_SQL_DB で DB ファイル)\n\n\n";
         o += "def _sqlnum(x, s):\n    try:\n        return int((_Dec(str(x).strip()) * (10 ** s)).to_integral_value(rounding=_RD))\n    except Exception:\n        return 0\n\n\n";
     }
@@ -3373,6 +3414,7 @@ pub fn to_rust(p: &Program) -> String {
     o += "\n/// CALL \"NAME\" の呼び先(引数は文字列化して渡す)\npub type Ext = fn(&str, Vec<String>);\n\n";
     if p.uses_sql {
         o += "/// EXEC SQL の実行先。引数は (SQL 文(:変数 は ?), 変数の値の文字列)、戻り値は (SQLCODE, 行のリスト)\npub type SqlFn = fn(&str, Vec<String>) -> (i64, Vec<Vec<String>>);\nstatic SQL_HANDLER: std::sync::OnceLock<SqlFn> = std::sync::OnceLock::new();\n\n/// EXEC SQL の実行先を登録する(最初の1回だけ有効)。未登録なら SQLCODE は -1\npub fn set_sql_handler(f: SqlFn) {\n    let _ = SQL_HANDLER.set(f);\n}\n\nfn sql_call(sql: &str, params: Vec<String>) -> (i64, Vec<Vec<String>>) {\n    match SQL_HANDLER.get() {\n        Some(f) => f(sql, params),\n        None => (-1, vec![]),\n    }\n}\n\n";
+        o += "/// NULL を表す文字列(指示変数が負のとき渡す/NULL の列で返す)\npub const SQL_NULL: &str = \"\\u{0}NULL\";\n\n";
         o += "fn sql_num(s: &str, scale: u32) -> i64 {\n    let t = s.trim();\n    let (neg, t) = match t.strip_prefix('-') {\n        Some(r) => (true, r),\n        None => (false, t.strip_prefix('+').unwrap_or(t)),\n    };\n    let (ip, fp) = t.split_once('.').unwrap_or((t, \"\"));\n    let mut f: String = fp.chars().take(scale as usize).collect();\n    while f.len() < scale as usize {\n        f.push('0');\n    }\n    let v: i64 = format!(\"{}{}\", if ip.is_empty() { \"0\" } else { ip }, f).parse().unwrap_or(0);\n    if neg { -v } else { v }\n}\n\n";
     }
     o += "fn rdiv(a: i64, b: i64) -> i64 {\n    let q = (a.abs() * 2 + b.abs()) / (b.abs() * 2);\n    if (a < 0) == (b < 0) { q } else { -q }\n}\n\n";
