@@ -1424,7 +1424,8 @@ impl P {
                     Stmt::Todo(format!("SEARCH: {e}"))
                 })
             }
-            "SORT" => {
+            "SORT" | "MERGE" => {
+                let is_merge = u == "MERGE";
                 self.next();
                 let r: Result<Stmt, String> = (|| {
                     let sd = ident(&self.next().ok_or("SORT の整列用ファイル名が無い")?.s);
@@ -1499,6 +1500,9 @@ impl P {
                             _ => return Err("SORT の形が未対応".into()),
                         }
                     }
+                    if is_merge && (inp.is_some() || using.len() < 2) {
+                        return Err("MERGE は USING に2つ以上のファイルが必要で、INPUT PROCEDURE は使えない".into());
+                    }
                     if keys.is_empty() || (using.is_empty() && inp.is_none()) || (giving.is_empty() && outp.is_none()) {
                         return Err("SORT は ON ... KEY と、USING か INPUT PROCEDURE、GIVING か OUTPUT PROCEDURE が揃った形のみ対応".into());
                     }
@@ -1511,7 +1515,7 @@ impl P {
                 })();
                 r.unwrap_or_else(|e| {
                     self.skip_to_end(&[]);
-                    Stmt::Todo(format!("SORT: {e}"))
+                    Stmt::Todo(format!("{}: {e}", if is_merge { "MERGE" } else { "SORT" }))
                 })
             }
             "RELEASE" => {
@@ -3363,6 +3367,19 @@ mod tests {
         assert!(!to_python(&p).contains("TODO(COBOL_to)"));
         assert!(to_python(&p).contains("reversed(["));
         assert!(to_rust(&p).contains("sort_by"));
+    }
+
+    #[test]
+    fn merge_using_giving() {
+        let src = std::fs::read_to_string("tests/samples/merge1.cbl").unwrap();
+        let p = parse(&src, false);
+        let all: Vec<&Stmt> = p.stmts.iter().chain(p.paragraphs.iter().flat_map(|x| x.1.iter())).collect();
+        assert!(all.iter().any(|s| matches!(s, Stmt::SortFile(_, _, u, _, None, None) if u.len() == 2)), "{:?}", p.paragraphs);
+        assert!(!to_python(&p).contains("TODO(COBOL_to)"));
+        // USING が1つだけの MERGE は仕様違反なので TODO に残す
+        let bad = src.replace("USING FA FB GIVING GF", "USING FA GIVING GF");
+        let pb = parse(&bad, false);
+        assert!(pb.stmts.iter().chain(pb.paragraphs.iter().flat_map(|x| x.1.iter())).any(|s| matches!(s, Stmt::Todo(t) if t.starts_with("MERGE"))));
     }
 
     #[test]
