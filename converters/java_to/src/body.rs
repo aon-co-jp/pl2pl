@@ -1109,10 +1109,41 @@ impl<'a> Tr<'a> {
             } else {
                 String::new()
             };
-            self.c.notes.push(format!("メソッド参照 {id}::{m} は未対応"));
-            return e(format!("{}.{}", id, snake(&m)), "");
+            return self.method_ref(&id, &m);
         }
         self.var(&id)
+    }
+
+    /// メソッド参照 `X::m` をラムダ/関数へ
+    fn method_ref(&mut self, id: &str, m: &str) -> E {
+        let upper = id.chars().next().is_some_and(|c| c.is_uppercase());
+        let py = match (id, m) {
+            ("String", "valueOf") | ("Objects", "toString") => "str".to_string(),
+            ("Integer", "parseInt") | ("Long", "parseLong") | ("Integer", "valueOf") | ("Integer", "intValue") | ("Long", "valueOf") => "int".to_string(),
+            ("Double", "parseDouble") | ("Double", "valueOf") => "float".to_string(),
+            ("String", "length") | ("List", "size") | ("Collection", "size") => "len".to_string(),
+            ("Math", "abs") => "abs".to_string(),
+            ("Math", "max") | ("Integer", "max") => "max".to_string(),
+            ("Math", "min") | ("Integer", "min") => "min".to_string(),
+            ("Integer", "sum") | ("Long", "sum") | ("Double", "sum") => "(lambda a, b: a + b)".to_string(),
+            ("Integer", "compare") | ("Long", "compare") | ("Double", "compare") => "(lambda a, b: (a > b) - (a < b))".to_string(),
+            ("String", "toUpperCase") => "(lambda s: s.upper())".to_string(),
+            ("String", "toLowerCase") => "(lambda s: s.lower())".to_string(),
+            ("String", "trim") => "(lambda s: s.strip())".to_string(),
+            ("String", "isEmpty") => "(lambda s: len(s) == 0)".to_string(),
+            ("this", _) => format!("self.{}", snake(m)),
+            (_, "new") => id.to_string(),
+            _ if upper => {
+                // 型::インスタンスメソッド → 第1引数がレシーバー
+                if let Some(prop) = m.strip_prefix("get").filter(|p| p.chars().next().is_some_and(|c| c.is_uppercase())) {
+                    format!("(lambda o: o.{})", lower_first(prop))
+                } else {
+                    format!("(lambda o, *a: o.{}(*a))", snake(m))
+                }
+            }
+            _ => format!("{}.{}", self.var(id).s, snake(m)),
+        };
+        e(py, "")
     }
 
     fn var(&mut self, id: &str) -> E {
@@ -1338,6 +1369,8 @@ impl<'a> Tr<'a> {
             ("limit", 1) if !self.user_method(name) => e(format!("list({r})[:{}]", a[0]), ""),
             ("skip", 1) if !self.user_method(name) => e(format!("list({r})[{}:]", a[0]), ""),
             ("sorted", 0) if !self.user_method(name) => e(format!("sorted({r})"), ""),
+            ("sorted", 1) if !self.user_method(name) => e(format!("sorted({r}, key=__import__(\"functools\").cmp_to_key({}))", a[0]), ""),
+            ("reversed", 0) if !self.user_method(name) && r.starts_with("(lambda a, b:") => e(format!("(lambda a, b: ({r})(b, a))"), ""),
             ("sum", 0) if !self.user_method(name) => e(format!("sum({r})"), "int"),
             ("count", 0) if !self.user_method(name) => e(format!("len(list({r}))"), "long"),
             ("findFirst", 0) | ("findAny", 0) if !self.user_method(name) => e(format!("next(iter({r}), None)"), ""),
@@ -1386,6 +1419,11 @@ impl<'a> Tr<'a> {
         let a: Vec<String> = args.iter().map(|x| x.s.clone()).collect();
         let n = a.len();
         let out = match (r, name) {
+            ("Comparator", "naturalOrder") => e("(lambda a, b: (a > b) - (a < b))".to_string(), ""),
+            ("Comparator", "reverseOrder") => e("(lambda a, b: (b > a) - (b < a))".to_string(), ""),
+            ("Comparator", "comparing") | ("Comparator", "comparingInt") | ("Comparator", "comparingLong") | ("Comparator", "comparingDouble") if n == 1 => {
+                e(format!("(lambda a, b: (({f})(a) > ({f})(b)) - (({f})(a) < ({f})(b)))", f = a[0]), "")
+            }
             ("Math", "max") => e(format!("max({})", a.join(", ")), &args.first().map(|x| x.ty.clone()).unwrap_or_default()),
             ("Math", "min") => e(format!("min({})", a.join(", ")), &args.first().map(|x| x.ty.clone()).unwrap_or_default()),
             ("Math", "abs") => e(format!("abs({})", a[0]), &args[0].ty),
@@ -1682,6 +1720,28 @@ mod tests {
         assert!(p.contains("sum(list(map(lambda x: x"), "{p}");
         assert!(p.contains(".join(map(str,"), "{p}");
         assert!(p.find("def _lam1").unwrap() < p.find("ys =").unwrap(), "{p}");
+    }
+    #[test]
+    fn method_refs_and_comparators() {
+        let p = tb("List<String> xs = new ArrayList<>(); List<Integer> a = xs.stream().map(String::length).collect(Collectors.toList()); List<String> b = xs.stream().sorted(Comparator.comparing(String::length).reversed()).collect(Collectors.toList()); List<String> c = xs.stream().sorted(Comparator.reverseOrder()).collect(Collectors.toList()); List<String> d = xs.stream().map(String::toUpperCase).collect(Collectors.toList()); int t = a.stream().reduce(0, Integer::sum);");
+        assert!(p.contains("map(len, list(xs))"), "{p}");
+        assert!(p.contains("cmp_to_key"), "{p}");
+        assert!(p.contains("(lambda s: s.upper())"), "{p}");
+        assert!(p.contains("(lambda a, b: a + b)"), "{p}");
+        assert!(!p.contains("未対応"), "{p}");
+        // 生成した Python を実際に動かす
+        let prog = format!("xs = [\"bb\", \"a\", \"ccc\"]
+{}
+print(a, b, c, d, t)
+", p.replace("
+        ", "
+").trim_start());
+        let out = std::process::Command::new("python").args(["-c", &prog]).output();
+        if let Ok(o) = out {
+            if o.status.success() {
+                assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "[2, 1, 3] ['ccc', 'bb', 'a'] ['ccc', 'bb', 'a'] ['BB', 'A', 'CCC'] 6", "{prog}");
+            }
+        }
     }
     #[test]
     fn if_for_return() {
