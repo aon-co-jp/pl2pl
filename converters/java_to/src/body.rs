@@ -1039,9 +1039,8 @@ impl<'a> Tr<'a> {
         }
         let args = if self.at("(") { self.args() } else { vec![] };
         if self.at("{") {
-            let _ = self.balanced("{", "}"); // 匿名クラス
-            self.c.notes.push(format!("匿名クラス new {short}(...) {{...}} は未対応"));
-            return e("None", "");
+            let inner = self.balanced("{", "}");
+            return self.anon_class(&short, &inner);
         }
         let a: Vec<String> = args.iter().map(|x| x.s.clone()).collect();
         let r = match short.as_str() {
@@ -1168,6 +1167,79 @@ impl<'a> Tr<'a> {
             return e(id.to_string(), "");
         }
         e(snake(id), &norm_ty(&self.c.locals.get(id).cloned().unwrap_or_default()))
+    }
+
+    /// 匿名クラス `new I() { 型 m(引数) {本体} }` を、メソッドが1つだけなら関数として出す
+    fn anon_class(&mut self, short: &str, inner: &[Tok]) -> E {
+        // 最初のメソッド: `(` の直前が名前
+        let Some(lp) = inner.iter().position(|t| t.is("(")) else {
+            self.c.notes.push(format!("匿名クラス new {short}(...) {{...}} はメソッドが見つからず未対応"));
+            return e("None", "");
+        };
+        let name_ok = lp > 0 && matches!(&inner[lp - 1], Tok::Id(_));
+        // 対応する `)`
+        let mut d = 0;
+        let mut rp = None;
+        for (k, t) in inner.iter().enumerate().skip(lp) {
+            if t.is("(") {
+                d += 1;
+            } else if t.is(")") {
+                d -= 1;
+                if d == 0 {
+                    rp = Some(k);
+                    break;
+                }
+            }
+        }
+        let (Some(rp), true) = (rp, name_ok) else {
+            self.c.notes.push(format!("匿名クラス new {short}(...) {{...}} は未対応の形"));
+            return e("None", "");
+        };
+        let Some(lb) = inner.iter().skip(rp).position(|t| t.is("{")).map(|k| k + rp) else {
+            return e("None", "");
+        };
+        let mut depth = 0;
+        let mut rb = inner.len();
+        for (k, t) in inner.iter().enumerate().skip(lb) {
+            if t.is("{") {
+                depth += 1;
+            } else if t.is("}") {
+                depth -= 1;
+                if depth == 0 {
+                    rb = k;
+                    break;
+                }
+            }
+        }
+        if inner.iter().skip(rb + 1).any(|t| t.is("(")) {
+            self.c.notes.push(format!("匿名クラス new {short}(...) {{...}} はメソッドが複数あり、最初の1つだけを関数にした"));
+        }
+        let params: Vec<String> = crate::parse::split_top(&inner[lp + 1..rp], ",")
+            .iter()
+            .filter(|x| !x.is_empty())
+            .filter_map(|x| x.iter().rev().find_map(|t| if let Tok::Id(n) = t { Some(n.clone()) } else { None }))
+            .collect();
+        let body: Vec<Tok> = inner[lb + 1..rb].to_vec();
+        for p in &params {
+            self.c.lambda_params.push(p.clone());
+        }
+        self.c.lam_n += 1;
+        let fname = format!("_anon{}", self.c.lam_n);
+        let mut lines: Vec<String> = vec![];
+        {
+            let mut sub = Tr { t: &body, i: 0, c: &mut *self.c };
+            sub.stmts(1, &mut lines);
+        }
+        for _ in &params {
+            self.c.lambda_params.pop();
+        }
+        if lines.is_empty() {
+            lines.push("    pass".into());
+        }
+        let mut def = vec![format!("def {fname}({}):", params.iter().map(|x| snake(x)).collect::<Vec<_>>().join(", "))];
+        def.extend(lines);
+        self.c.hoisted.extend(def);
+        e(fname, "")
     }
 
     fn lambda(&mut self, params: Vec<String>) -> E {
@@ -1851,6 +1923,22 @@ print(m)
             assert!(o.status.success(), "{prog}
 {}", String::from_utf8_lossy(&o.stderr));
             assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "{2: 4, 1: 1}", "{prog}");
+        }
+    }
+    #[test]
+    fn anonymous_class_single_method() {
+        let p = tb("List<Integer> xs = new ArrayList<>(); Comparator<Integer> c = new Comparator<Integer>() { @Override public int compare(Integer a, Integer b) { int d = b - a; return d; } }; List<Integer> s = xs.stream().sorted(c).collect(Collectors.toList());");
+        assert!(!p.contains("未対応"), "{p}");
+        assert!(p.contains("def _anon"), "{p}");
+        // hoisted の def は本体と同じ字下げで出る。字下げを揃えて実際に動かす
+        let prog = format!("{}
+print(s)
+", p.lines().map(|l| l.strip_prefix("    ").unwrap_or(l)).collect::<Vec<_>>().join("
+").replacen("xs = []", "xs = [1, 3, 2]", 1));
+        if let Ok(o) = std::process::Command::new("python").args(["-c", &prog]).output() {
+            assert!(o.status.success(), "{prog}
+{}", String::from_utf8_lossy(&o.stderr));
+            assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "[3, 2, 1]", "{prog}");
         }
     }
     #[test]
