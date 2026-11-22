@@ -70,7 +70,9 @@ pub enum Stmt {
     Write(String, Option<Expr>),              // レコード名, FROM
     InspectScoped(String, Inspect, Option<Expr>, Option<Expr>), // INSPECT ... AFTER INITIAL a BEFORE INITIAL b
     SizeErr(Box<Stmt>, Vec<Stmt>, Vec<Stmt>), // 算術文, ON SIZE ERROR, NOT ON SIZE ERROR
-    SortFile(String, Vec<(String, bool)>, Vec<String>, Vec<String>), // SORT: 整列用ファイル, (キー項目, 昇順か), USING, GIVING
+    SortFile(String, Vec<(String, bool)>, Vec<String>, Vec<String>, Option<(String, Option<String>)>, Option<(String, Option<String>)>), // SORT: 整列用ファイル, (キー項目, 昇順か), USING, GIVING, INPUT PROCEDURE, OUTPUT PROCEDURE
+    Release(String, Option<Expr>),            // RELEASE レコード [FROM]: 整列用ファイル名
+    Return(String, Option<String>, Vec<Stmt>, Vec<Stmt>), // RETURN 整列用ファイル [INTO] AT END / NOT AT END
     Stop,
     Nop,
     Todo(String),
@@ -219,7 +221,7 @@ fn tokenize(s: &str) -> Vec<Tok> {
 }
 
 const STARTERS: &[&str] = &[
-    "COPY", "START", "DELETE", "SEARCH", "RETURN", "RELEASE", "MERGE", "INVOKE", "CANCEL", "ALTER", "END-READ", "END-CALL", "END-STRING", "END-UNSTRING", "END-WRITE", "END-SEARCH", "END-ACCEPT", "END-DISPLAY", "END-COMPUTE", "END-ADD", "END-SUBTRACT", "END-MULTIPLY", "END-DIVIDE", "END-EXEC",
+    "COPY", "START", "DELETE", "SEARCH", "RETURN", "RELEASE", "MERGE", "INVOKE", "CANCEL", "ALTER", "END-READ", "END-CALL", "END-STRING", "END-UNSTRING", "END-WRITE", "END-SEARCH", "END-RETURN", "END-ACCEPT", "END-DISPLAY", "END-COMPUTE", "END-ADD", "END-SUBTRACT", "END-MULTIPLY", "END-DIVIDE", "END-EXEC",
     "DISPLAY", "MOVE", "ADD", "SUBTRACT", "MULTIPLY", "DIVIDE", "COMPUTE", "IF", "ELSE", "END-IF", "PERFORM", "END-PERFORM", "STOP", "GOBACK", "EXIT", "CONTINUE", "OPEN", "CLOSE", "READ", "WRITE", "CALL", "EVALUATE", "END-EVALUATE", "WHEN", "ACCEPT", "GO", "INITIALIZE", "SET", "STRING", "UNSTRING", "INSPECT", "SORT", "EXEC", "REWRITE",
 ];
 
@@ -1428,6 +1430,7 @@ impl P {
                     let sd = ident(&self.next().ok_or("SORT の整列用ファイル名が無い")?.s);
                     let mut keys: Vec<(String, bool)> = vec![];
                     let (mut using, mut giving): (Vec<String>, Vec<String>) = (vec![], vec![]);
+                    let (mut inp, mut outp): (Option<(String, Option<String>)>, Option<(String, Option<String>)>) = (None, None);
                     let stop = |w: &str| matches!(w, "USING" | "GIVING" | "INPUT" | "OUTPUT" | "WITH" | "COLLATING" | "DUPLICATES");
                     loop {
                         let w = self.word();
@@ -1452,38 +1455,121 @@ impl P {
                         }
                         break;
                     }
-                    if self.word() == "INPUT" || self.word() == "OUTPUT" {
-                        return Err("INPUT/OUTPUT PROCEDURE は未対応".into());
-                    }
-                    if self.word() == "USING" {
-                        self.next();
-                        while !self.ended && self.word() != "GIVING" && self.peek().is_some() {
-                            using.push(ident(&self.next().unwrap().s));
-                        }
-                    }
-                    if self.word() == "GIVING" {
-                        self.next();
-                        loop {
-                            let t = self.next().ok_or("GIVING のファイル名が無い")?;
-                            giving.push(ident(&t.s));
-                            if self.ended || self.peek().is_none() {
-                                break;
+                    // 後ろの節(USING / GIVING / INPUT PROCEDURE / OUTPUT PROCEDURE)は順不同で読む
+                    while !self.ended && self.peek().is_some() {
+                        match self.word().as_str() {
+                            "USING" => {
+                                self.next();
+                                while !self.ended && !matches!(self.word().as_str(), "GIVING" | "OUTPUT") && self.peek().is_some() {
+                                    using.push(ident(&self.next().unwrap().s));
+                                }
                             }
+                            "GIVING" => {
+                                self.next();
+                                loop {
+                                    let t = self.next().ok_or("GIVING のファイル名が無い")?;
+                                    giving.push(ident(&t.s));
+                                    if self.ended || self.peek().is_none() {
+                                        break;
+                                    }
+                                }
+                            }
+                            w @ ("INPUT" | "OUTPUT") => {
+                                let is_in = w == "INPUT";
+                                self.next();
+                                if self.word() != "PROCEDURE" {
+                                    return Err("INPUT/OUTPUT の後ろに PROCEDURE が無い".into());
+                                }
+                                self.next();
+                                if self.word() == "IS" {
+                                    self.next();
+                                }
+                                let a = ident(&self.next().ok_or("段落名が無い")?.s);
+                                let mut b = None;
+                                if !self.ended && matches!(self.word().as_str(), "THRU" | "THROUGH") {
+                                    self.next();
+                                    b = Some(ident(&self.next().ok_or("THRU の段落名が無い")?.s));
+                                }
+                                if is_in {
+                                    inp = Some((a, b));
+                                } else {
+                                    outp = Some((a, b));
+                                }
+                            }
+                            _ => return Err("SORT の形が未対応".into()),
                         }
                     }
-                    if keys.is_empty() || using.is_empty() || giving.is_empty() {
-                        return Err("SORT は ON ... KEY / USING / GIVING が揃った形のみ対応".into());
+                    if keys.is_empty() || (using.is_empty() && inp.is_none()) || (giving.is_empty() && outp.is_none()) {
+                        return Err("SORT は ON ... KEY と、USING か INPUT PROCEDURE、GIVING か OUTPUT PROCEDURE が揃った形のみ対応".into());
                     }
                     for f in using.iter().chain(giving.iter()) {
                         if !self.files.iter().any(|x| &x.name == f) {
                             return Err(format!("SORT: ファイル {f} が SELECT で宣言されていない"));
                         }
                     }
-                    Ok(Stmt::SortFile(sd, keys, using, giving))
+                    Ok(Stmt::SortFile(sd, keys, using, giving, inp, outp))
                 })();
                 r.unwrap_or_else(|e| {
                     self.skip_to_end(&[]);
                     Stmt::Todo(format!("SORT: {e}"))
+                })
+            }
+            "RELEASE" => {
+                self.next();
+                let r: Result<Stmt, String> = (|| {
+                    let rec = ident(&self.next().ok_or("レコード名が無い")?.s);
+                    let f = self.files.iter().find(|f| f.record == rec).map(|f| f.name.clone()).ok_or_else(|| format!("{rec}: レコードが SD/FD に無い"))?;
+                    let mut from = None;
+                    if !self.ended && self.word() == "FROM" {
+                        self.next();
+                        from = Some(self.operand()?);
+                    }
+                    Ok(Stmt::Release(f, from))
+                })();
+                r.unwrap_or_else(|e| {
+                    self.skip_to_end(&[]);
+                    Stmt::Todo(format!("RELEASE: {e}"))
+                })
+            }
+            "RETURN" => {
+                self.next();
+                let r: Result<Stmt, String> = (|| {
+                    let f = ident(&self.next().ok_or("ファイル名が無い")?.s);
+                    if self.file_named(&f).is_none() {
+                        return Err(format!("{f}: ファイル定義(SELECT)が無い"));
+                    }
+                    if !self.ended && self.word() == "RECORD" {
+                        self.next();
+                    }
+                    let mut into = None;
+                    if !self.ended && self.word() == "INTO" {
+                        self.next();
+                        let n = ident(&self.next().ok_or("INTO 先が無い")?.s);
+                        self.used.insert(n.clone());
+                        into = Some(n);
+                    }
+                    let (mut at_end, mut not_at_end) = (vec![], vec![]);
+                    if !self.ended && self.word() == "AT" && self.up(1) == "END" {
+                        self.next();
+                        self.next();
+                        at_end = self.block(true, &["NOT", "END-RETURN"]);
+                    }
+                    if !self.ended && self.word() == "NOT" && self.up(1) == "AT" && self.up(2) == "END" {
+                        self.next();
+                        self.next();
+                        self.next();
+                        not_at_end = self.block(true, &["END-RETURN"]);
+                    }
+                    if !self.ended && self.word() == "END-RETURN" {
+                        let d = self.peek().map(|t| t.dot).unwrap_or(false);
+                        self.next();
+                        self.ended = d;
+                    }
+                    Ok(Stmt::Return(f, into, at_end, not_at_end))
+                })();
+                r.unwrap_or_else(|e| {
+                    self.skip_through("END-RETURN");
+                    Stmt::Todo(format!("RETURN: {e}"))
                 })
             }
             "CALL" => {
@@ -1664,7 +1750,7 @@ impl P {
                     Stmt::Todo(format!("WRITE: {e}"))
                 })
             }
-            "ELSE" | "END-IF" | "END-PERFORM" | "WHEN" | "END-EVALUATE" | "END-READ" | "END-CALL" | "END-STRING" | "END-UNSTRING" | "END-WRITE" | "END-SEARCH" | "END-ACCEPT" | "END-DISPLAY" | "END-COMPUTE" | "END-ADD" | "END-SUBTRACT" | "END-MULTIPLY" | "END-DIVIDE" | "END-EXEC" => {
+            "ELSE" | "END-IF" | "END-PERFORM" | "WHEN" | "END-EVALUATE" | "END-READ" | "END-CALL" | "END-STRING" | "END-UNSTRING" | "END-WRITE" | "END-SEARCH" | "END-RETURN" | "END-ACCEPT" | "END-DISPLAY" | "END-COMPUTE" | "END-ADD" | "END-SUBTRACT" | "END-MULTIPLY" | "END-DIVIDE" | "END-EXEC" => {
                 // 対応する開始が無い終端語: 読み飛ばす
                 self.next();
                 Stmt::Nop
@@ -2761,9 +2847,9 @@ fn emit(p: &Program, ss: &[Stmt], l: Lang, ind: usize, o: &mut String) {
                     Lang::Rs => o.push_str(&format!("{pad}self.wr_{f}();\n")),
                 }
             }
-            Stmt::SortFile(sd, keys, using, giving) => {
+            Stmt::SortFile(sd, keys, using, giving, inp, outp) => {
                 // キー項目の位置と幅は、整列用ファイル(SD)の項目並びから求める。SD が無ければ USING の先頭のファイルを使う
-                let layout = p.files.iter().find(|f| &f.name == sd).or_else(|| p.files.iter().find(|f| f.name == using[0]));
+                let layout = p.files.iter().find(|f| &f.name == sd).or_else(|| using.first().and_then(|u| p.files.iter().find(|f| &f.name == u)));
                 let mut ks: Vec<(usize, usize, bool, bool)> = vec![];
                 let mut missing: Option<String> = None;
                 for (k, asc) in keys {
@@ -2784,34 +2870,96 @@ fn emit(p: &Program, ss: &[Stmt], l: Lang, ind: usize, o: &mut String) {
                         None => missing = Some(k.clone()),
                     }
                 }
+                let perform = |pr: &(String, Option<String>)| -> Stmt {
+                    match &pr.1 {
+                        Some(b) => Stmt::Thru(pr.0.clone(), b.clone()),
+                        None => Stmt::Call(pr.0.clone()),
+                    }
+                };
+                let path_of = |n: &String| -> String {
+                    match p.files.iter().find(|f| &f.name == n) {
+                        Some(f) if f.assign_lit => format!("{:?}.to_string()", f.assign),
+                        Some(f) => format!("std::env::var({:?}).unwrap_or_else(|_| {:?}.to_string())", f.assign.to_uppercase(), f.assign.to_lowercase()),
+                        None => "String::new()".into(),
+                    }
+                };
                 if let Some(k) = missing {
                     o.push_str(&format!("{pad}{} TODO(COBOL_to): SORT のキー {k} がレコードの項目に無い\n", if py { "#" } else { "//" }));
                 } else if py {
                     let kl = ks.iter().map(|(a, b, c, d)| format!("({a}, {b}, {}, {})", if *c { "True" } else { "False" }, if *d { "True" } else { "False" })).collect::<Vec<_>>().join(", ");
                     let ul = using.iter().map(|f| format!("{f:?}")).collect::<Vec<_>>().join(", ");
                     let gl = giving.iter().map(|f| format!("{f:?}")).collect::<Vec<_>>().join(", ");
-                    o.push_str(&format!("{pad}_recs = []\n"));
-                    o.push_str(&format!("{pad}for _n in [{ul}]:\n{pad}    with open(_FILES[_n][\"path\"], \"r\", encoding=\"utf-8\", newline=\"\") as _h:\n{pad}        _recs += [_l.rstrip(\"\\r\\n\") for _l in _h]\n"));
+                    o.push_str(&format!("{pad}self._sort_buf = []\n"));
+                    if let Some(pr) = inp {
+                        emit(p, &[perform(pr)], l, ind, o);
+                    } else {
+                        o.push_str(&format!("{pad}for _n in [{ul}]:\n{pad}    with open(_FILES[_n][\"path\"], \"r\", encoding=\"utf-8\", newline=\"\") as _h:\n{pad}        self._sort_buf += [_l.rstrip(\"\\r\\n\") for _l in _h]\n"));
+                    }
                     o.push_str(&format!("{pad}for _o, _w, _nm, _ds in reversed([{kl}]):\n"));
-                    o.push_str(&format!("{pad}    _recs.sort(key=(lambda r, _o=_o, _w=_w: _num(r[_o:_o + _w])) if _nm else (lambda r, _o=_o, _w=_w: r[_o:_o + _w]), reverse=_ds)\n"));
-                    o.push_str(&format!("{pad}for _n in [{gl}]:\n{pad}    with open(_FILES[_n][\"path\"], \"w\", encoding=\"utf-8\", newline=\"\") as _h:\n{pad}        _h.write(\"\".join(_r + \"\\n\" for _r in _recs))\n"));
+                    o.push_str(&format!("{pad}    self._sort_buf.sort(key=(lambda r, _o=_o, _w=_w: _num(r[_o:_o + _w])) if _nm else (lambda r, _o=_o, _w=_w: r[_o:_o + _w]), reverse=_ds)\n"));
+                    if let Some(pr) = outp {
+                        o.push_str(&format!("{pad}self._sort_pos = 0\n"));
+                        emit(p, &[perform(pr)], l, ind, o);
+                    } else {
+                        o.push_str(&format!("{pad}for _n in [{gl}]:\n{pad}    with open(_FILES[_n][\"path\"], \"w\", encoding=\"utf-8\", newline=\"\") as _h:\n{pad}        _h.write(\"\".join(_r + \"\\n\" for _r in self._sort_buf))\n"));
+                    }
                 } else {
-                    let path_of = |n: &String| -> String {
-                        match p.files.iter().find(|f| &f.name == n) {
-                            Some(f) if f.assign_lit => format!("{:?}.to_string()", f.assign),
-                            Some(f) => format!("std::env::var({:?}).unwrap_or_else(|_| {:?}.to_string())", f.assign.to_uppercase(), f.assign.to_lowercase()),
-                            None => "String::new()".into(),
-                        }
-                    };
                     let kl = ks.iter().map(|(a, b, c, d)| format!("({a}usize, {b}usize, {c}, {d})")).collect::<Vec<_>>().join(", ");
                     let ul = using.iter().map(|f| path_of(f)).collect::<Vec<_>>().join(", ");
                     let gl = giving.iter().map(|f| path_of(f)).collect::<Vec<_>>().join(", ");
-                    o.push_str(&format!("{pad}{{\n{pad}    let mut recs: Vec<String> = vec![];\n"));
-                    o.push_str(&format!("{pad}    for path in [{ul}] {{\n{pad}        if let Ok(t) = std::fs::read_to_string(&path) {{ for l in t.lines() {{ recs.push(l.trim_end_matches('\\r').to_string()); }} }}\n{pad}    }}\n"));
-                    o.push_str(&format!("{pad}    let keys: Vec<(usize, usize, bool, bool)> = vec![{kl}];\n"));
-                    o.push_str(&format!("{pad}    for &(off, w, num, desc) in keys.iter().rev() {{\n{pad}        recs.sort_by(|a, b| {{\n{pad}            let ka: String = a.chars().skip(off).take(w).collect();\n{pad}            let kb: String = b.chars().skip(off).take(w).collect();\n{pad}            let c = if num {{ ka.trim().parse::<i64>().unwrap_or(0).cmp(&kb.trim().parse::<i64>().unwrap_or(0)) }} else {{ ka.cmp(&kb) }};\n{pad}            if desc {{ c.reverse() }} else {{ c }}\n{pad}        }});\n{pad}    }}\n"));
-                    o.push_str(&format!("{pad}    let body: String = recs.iter().map(|r| format!(\"{{}}\\n\", r)).collect();\n"));
-                    o.push_str(&format!("{pad}    for path in [{gl}] {{ let _ = std::fs::write(&path, &body); }}\n{pad}}}\n"));
+                    o.push_str(&format!("{pad}self.sort_buf.clear();\n"));
+                    if let Some(pr) = inp {
+                        emit(p, &[perform(pr)], l, ind, o);
+                    } else {
+                        o.push_str(&format!("{pad}for path in [{ul}] {{\n{pad}    if let Ok(t) = std::fs::read_to_string(&path) {{ for l in t.lines() {{ self.sort_buf.push(l.trim_end_matches('\\r').to_string()); }} }}\n{pad}}}\n"));
+                    }
+                    o.push_str(&format!("{pad}{{\n{pad}    let keys: Vec<(usize, usize, bool, bool)> = vec![{kl}];\n"));
+                    o.push_str(&format!("{pad}    for &(off, w, num, desc) in keys.iter().rev() {{\n{pad}        self.sort_buf.sort_by(|a, b| {{\n{pad}            let ka: String = a.chars().skip(off).take(w).collect();\n{pad}            let kb: String = b.chars().skip(off).take(w).collect();\n{pad}            let c = if num {{ ka.trim().parse::<i64>().unwrap_or(0).cmp(&kb.trim().parse::<i64>().unwrap_or(0)) }} else {{ ka.cmp(&kb) }};\n{pad}            if desc {{ c.reverse() }} else {{ c }}\n{pad}        }});\n{pad}    }}\n{pad}}}\n"));
+                    if let Some(pr) = outp {
+                        o.push_str(&format!("{pad}self.sort_pos = 0;\n"));
+                        emit(p, &[perform(pr)], l, ind, o);
+                    } else {
+                        o.push_str(&format!("{pad}{{\n{pad}    let body: String = self.sort_buf.iter().map(|r| format!(\"{{}}\\n\", r)).collect();\n{pad}    for path in [{gl}] {{ let _ = std::fs::write(&path, &body); }}\n{pad}}}\n"));
+                    }
+                }
+            }
+            Stmt::Release(f, from) => {
+                if let Some(e) = from {
+                    match p.files.iter().find(|x| &x.name == f) {
+                        Some(fd) if fd.fields.len() == 1 => emit(p, &[Stmt::Move(e.clone(), vec![fd.fields[0].clone()])], l, ind, o),
+                        _ => o.push_str(&format!("{pad}{} TODO(COBOL_to): RELEASE FROM: 複数項目のレコードは未対応\n", if py { "#" } else { "//" })),
+                    }
+                }
+                match l {
+                    Lang::Py => o.push_str(&format!("{pad}self._sort_buf.append(self.f_pack({f:?}))\n")),
+                    Lang::Rs => o.push_str(&format!("{pad}{{ let rec = self.pk_{f}(); self.sort_buf.push(rec); }}\n")),
+                }
+            }
+            Stmt::Return(f, into, at_end, not_at_end) => {
+                let mut ok: Vec<Stmt> = vec![];
+                if let Some(i) = into {
+                    match p.files.iter().find(|x| &x.name == f) {
+                        Some(fd) if fd.fields.len() == 1 => ok.push(Stmt::Move(Expr::Var(fd.fields[0].clone()), vec![i.clone()])),
+                        _ => ok.push(Stmt::Todo("RETURN INTO: 複数項目のレコードは未対応".into())),
+                    }
+                }
+                ok.extend(not_at_end.iter().cloned());
+                match l {
+                    Lang::Py => {
+                        o.push_str(&format!("{pad}if self._sort_pos < len(self._sort_buf):\n{pad}    self.f_unpack({f:?}, self._sort_buf[self._sort_pos])\n{pad}    self._sort_pos += 1\n"));
+                        emit(p, &ok, l, ind + 1, o);
+                        if !at_end.is_empty() {
+                            o.push_str(&format!("{pad}else:\n"));
+                            emit(p, at_end, l, ind + 1, o);
+                        }
+                    }
+                    Lang::Rs => {
+                        o.push_str(&format!("{pad}if self.sort_pos < self.sort_buf.len() {{\n{pad}    let rec = self.sort_buf[self.sort_pos].clone();\n{pad}    self.up_{f}(&rec);\n{pad}    self.sort_pos += 1;\n"));
+                        emit(p, &ok, l, ind + 1, o);
+                        o.push_str(&format!("{pad}}} else {{\n"));
+                        emit(p, at_end, l, ind + 1, o);
+                        o.push_str(&format!("{pad}}}\n"));
+                    }
                 }
             }
             Stmt::SizeErr(inner, err, ok) => size_emit(p, inner, err, ok, l, ind, o),
@@ -2885,7 +3033,7 @@ pub fn to_python(p: &Program) -> String {
         }
         o += "}\n\n\n";
     }
-    o += "class State:\n    def __init__(self):\n        self.out = \"\"\n        self.goto = \"\"\n        self._fh = {}\n";
+    o += "class State:\n    def __init__(self):\n        self.out = \"\"\n        self.goto = \"\"\n        self._fh = {}\n        self._sort_buf = []\n        self._sort_pos = 0\n";
     for v in &p.vars {
         let init = init_value(v);
         let val = if v.occurs > 0 { format!("[{init}] * {}", v.occurs) } else { init };
@@ -2897,6 +3045,8 @@ pub fn to_python(p: &Program) -> String {
         o += "\n    def f_open(self, name, mode):\n        try:\n            self._fh[name] = open(_FILES[name][\"path\"], {\"input\": \"r\", \"output\": \"w\", \"extend\": \"a\", \"io\": \"r\"}[mode], encoding=\"utf-8\", newline=\"\")\n            self._fs(name, \"00\")\n        except OSError:\n            self._fs(name, \"35\")\n";
         o += "\n    def f_close(self, name):\n        fh = self._fh.pop(name, None)\n        if fh:\n            fh.close()\n";
         o += "\n    def f_read(self, name):\n        fh = self._fh.get(name)\n        line = fh.readline() if fh else \"\"\n        if not line:\n            self._fs(name, \"10\")\n            return False\n        line = line.rstrip(\"\\r\\n\")\n        pos = 0\n        for attr, w, num in _FILES[name][\"fields\"]:\n            seg = line[pos:pos + w]\n            pos += w\n            setattr(self, attr, _num(seg) if num else seg.rstrip())\n        self._fs(name, \"00\")\n        return True\n";
+        o += "\n    def f_pack(self, name):\n        buf = \"\"\n        for attr, w, num in _FILES[name][\"fields\"]:\n            v = getattr(self, attr)\n            if num:\n                buf += (\"-\" + str(-v).rjust(w - 1, \"0\")) if v < 0 else str(v).rjust(w, \"0\")\n            else:\n                buf += str(v)[:w].ljust(w)\n        return buf\n";
+        o += "\n    def f_unpack(self, name, line):\n        pos = 0\n        for attr, w, num in _FILES[name][\"fields\"]:\n            seg = line[pos:pos + w]\n            pos += w\n            setattr(self, attr, _num(seg) if num else seg.rstrip())\n";
         o += "\n    def f_write(self, name):\n        fh = self._fh.get(name)\n        buf = \"\"\n        for attr, w, num in _FILES[name][\"fields\"]:\n            v = getattr(self, attr)\n            if num:\n                buf += (\"-\" + str(-v).rjust(w - 1, \"0\")) if v < 0 else str(v).rjust(w, \"0\")\n            else:\n                buf += str(v)[:w].ljust(w)\n        if fh:\n            fh.write(buf + \"\\n\")\n            self._fs(name, \"00\")\n";
     }
     let ord = order(p);
@@ -2931,7 +3081,8 @@ pub fn to_rust(p: &Program) -> String {
     for f in &p.files {
         o += &format!("    fr_{0}: Option<std::io::BufReader<std::fs::File>>,\n    fw_{0}: Option<std::fs::File>,\n", f.name);
     }
-    o += "}\n\nimpl State {\n    fn new(ext: Option<Ext>) -> Self {\n        State {\n            out: String::new(),\n            goto: String::new(),\n            ext,\n";
+    o += "    sort_buf: Vec<String>,\n    sort_pos: usize,\n";
+    o += "}\n\nimpl State {\n    fn new(ext: Option<Ext>) -> Self {\n        State {\n            out: String::new(),\n            goto: String::new(),\n            ext,\n            sort_buf: vec![],\n            sort_pos: 0,\n";
     for v in &p.vars {
         let init = init_value(v);
         let one = if v.numeric { init } else { format!("{init}.to_string()") };
@@ -2987,6 +3138,22 @@ pub fn to_rust(p: &Program) -> String {
             o += &format!("        s += &{};\n", if num { format!("pad_num(self.{fld}, {w})") } else { format!("pad_str(&self.{fld}, {w})") });
         }
         o += &format!("        s.push('\\n');\n        if let Some(w) = self.fw_{n}.as_mut() {{\n            let _ = w.write_all(s.as_bytes());\n        }}\n        self.fs_{n}(\"00\");\n    }}\n");
+        o += &format!("\n    fn pk_{n}(&self) -> String {{\n        let mut s = String::new();\n");
+        for fld in &f.fields {
+            let v = var_of(p, fld);
+            let w = v.map(|x| x.width.max(1)).unwrap_or(1);
+            let num = v.map(|x| x.numeric).unwrap_or(false);
+            o += &format!("        s += &{};\n", if num { format!("pad_num(self.{fld}, {w})") } else { format!("pad_str(&self.{fld}, {w})") });
+        }
+        o += "        s\n    }\n";
+        o += &format!("\n    fn up_{n}(&mut self, line: &str) {{\n        let chars: Vec<char> = line.chars().collect();\n        let mut pos = 0usize;\n");
+        for fld in &f.fields {
+            let v = var_of(p, fld);
+            let w = v.map(|x| x.width.max(1)).unwrap_or(1);
+            let num = v.map(|x| x.numeric).unwrap_or(false);
+            o += &format!("        {{\n            let seg: String = chars.iter().skip(pos).take({w}).collect();\n            pos += {w};\n            self.{fld} = {};\n        }}\n", if num { "seg.trim().parse::<i64>().unwrap_or(0)" } else { "seg.trim_end().to_string()" });
+        }
+        o += "    }\n";
     }
     o + "}\n\npub fn run() -> String {\n    run_with(None)\n}\n\npub fn run_with(ext: Option<Ext>) -> String {\n    let mut s = State::new(ext);\n    s.main();\n    s.out\n}\n"
 }
@@ -3196,6 +3363,17 @@ mod tests {
         assert!(!to_python(&p).contains("TODO(COBOL_to)"));
         assert!(to_python(&p).contains("reversed(["));
         assert!(to_rust(&p).contains("sort_by"));
+    }
+
+    #[test]
+    fn sort_input_output_procedure() {
+        let src = std::fs::read_to_string("tests/samples/sort2.cbl").unwrap();
+        let p = parse(&src, false);
+        let all: Vec<&Stmt> = p.stmts.iter().chain(p.paragraphs.iter().flat_map(|x| x.1.iter())).collect();
+        assert!(all.iter().any(|s| matches!(s, Stmt::SortFile(_, _, _, _, Some(_), Some(_)))), "{:?}", p.paragraphs);
+        assert!(!to_python(&p).contains("TODO(COBOL_to)"), "{}", to_python(&p));
+        assert!(to_python(&p).contains("f_unpack") && to_python(&p).contains("f_pack"));
+        assert!(to_rust(&p).contains("fn pk_srt") && to_rust(&p).contains("fn up_srt"));
     }
 
     #[test]
