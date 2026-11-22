@@ -109,10 +109,23 @@ fn unique_name(base: &str, used: &mut HashSet<String>, verb: &str) -> String {
 enum Simple {
     Text(String),
     Json(String),
+    /// 複数文の本体(`return` は `@RET(式)@` の目印)
+    Block(String),
 }
 
 /// `return "a" + id + 1;` のような単純な戻りだけ Rust にする。
-fn simple_return(body: &[Tok], vars: &[(String, String)], is_expr: bool) -> Option<Simple> {
+fn simple_return(body: &[Tok], vars: &[(String, String)], is_expr: bool, dtos: &HashSet<String>) -> Option<Simple> {
+    if let Some(s) = simple_return1(body, vars, is_expr) {
+        return Some(s);
+    }
+    if is_expr {
+        return None;
+    }
+    let inner = if body.first().is_some_and(|t| t.is("{")) && body.last().is_some_and(|t| t.is("}")) { &body[1..body.len() - 1] } else { body };
+    crate::rsblock::rs_block(inner, vars, &mut HashSet::new(), dtos, 0).filter(|b| b.contains("@RET(")).map(Simple::Block)
+}
+
+fn simple_return1(body: &[Tok], vars: &[(String, String)], is_expr: bool) -> Option<Simple> {
     let toks: Vec<Tok> = if is_expr {
         body.to_vec()
     } else {
@@ -165,6 +178,21 @@ fn simple_return(body: &[Tok], vars: &[(String, String)], is_expr: bool) -> Opti
         return single_non_text.map(Simple::Json);
     }
     Some(Simple::Text(if args.is_empty() { format!("{:?}.to_string()", unesc(&fmt)) } else { format!("format!({:?}{})", fmt, args.iter().map(|a| format!(", {a}")).collect::<String>()) }))
+}
+
+/// `@RET(式)@` を、ハンドラの戻り値の形(`@` が式に置き換わる)に包む。最後の行は `return` を付けない。
+fn wrap_ret(block: &str, shape: &str) -> String {
+    let mut out = String::new();
+    let mut rest = block;
+    while let Some(i) = rest.find("@RET(") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 5..];
+        let j = after.find(")@").unwrap_or(0);
+        out.push_str(&shape.replace('@', &after[..j]));
+        rest = &after[j + 2..];
+    }
+    out.push_str(rest);
+    out.trim_end().trim_start_matches("    ").to_string()
 }
 
 fn unesc(s: &str) -> String {
@@ -248,7 +276,7 @@ pub fn generate(units: &[crate::parse::Unit], endpoints: &[Endpoint], target: &s
         } else {
             classes.iter().find(|c| c.name == e.class).and_then(|c| c.methods.iter().find(|m| m.name == e.method)).and_then(|m| m.body.clone()).map(|b| (b, false))
         };
-        let simple = body_src.as_ref().and_then(|(b, is_expr)| simple_return(b, &vars, *is_expr));
+        let simple = body_src.as_ref().and_then(|(b, is_expr)| simple_return(b, &vars, *is_expr, &dtos));
         let (h, n_todo) = if rpoem { rpoem_handler(e, &fn_name, &dtos, &simple, &src, &mut warnings) } else { poem_handler(e, &fn_name, &dtos, &simple, &src, &mut warnings) };
         todo += n_todo;
         handlers.push_str(&h);
@@ -387,6 +415,7 @@ fn poem_handler(e: &Endpoint, name: &str, dtos: &HashSet<String>, simple: &Optio
     let (ret, body, todo) = match simple {
         Some(Simple::Text(t)) => ("String".to_string(), t.clone(), 0),
         Some(Simple::Json(j)) => ("Json<Value>".to_string(), format!("Json(json!({j}))"), 0),
+        Some(Simple::Block(b)) => ("Json<Value>".to_string(), wrap_ret(b, "Json(json!(@))"), 0),
         None => {
             let ps: Vec<String> = e.params.iter().filter(|p| p.kind != Kind::Ctx && p.kind != Kind::Body).map(|p| format!("\"{}\": {}", p.java, rust_ident(&p.var))).collect();
             ("Json<Value>".to_string(), format!("Json(json!({{\"todo\": \"{name}\"{}}}))", if ps.is_empty() { String::new() } else { format!(", {}", ps.join(", ")) }), 1)
@@ -405,6 +434,7 @@ fn rpoem_handler(e: &Endpoint, name: &str, dtos: &HashSet<String>, simple: &Opti
     let (body, todo) = match simple {
         Some(Simple::Text(t)) => (format!("Json(serde_json::json!({t})).into_response(StatusCode::OK)"), 0),
         Some(Simple::Json(j)) => (format!("Json(serde_json::json!({j})).into_response(StatusCode::OK)"), 0),
+        Some(Simple::Block(b)) => (wrap_ret(b, "Json(serde_json::json!(@)).into_response(StatusCode::OK)"), 0),
         None => {
             let ps: Vec<String> = e.params.iter().filter(|p| p.kind == Kind::Path).map(|p| format!("\"{}\": {}", p.java, rust_ident(&p.var))).collect();
             (format!("Json(serde_json::json!({{\"todo\": \"{name}\"{}}})).into_response(StatusCode::OK)", if ps.is_empty() { String::new() } else { format!(", {}", ps.join(", ")) }), 1)

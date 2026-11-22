@@ -64,4 +64,17 @@ public class UserController {
         }
         return ResponseEntity.notFound().build();
     }
+
+    @GetMapping("/total/{n}")
+    public int total(@PathVariable int n) {
+        int s = 0;
+        for (int i = 0; i < n; i++) {
+            if (i % 2 == 0) {
+                s += i;
+            } else {
+                s -= 1;
+            }
+        }
+        return s;
+    }
 }

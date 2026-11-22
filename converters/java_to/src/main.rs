@@ -4,6 +4,7 @@ mod frameworks;
 mod lexer;
 mod parse;
 mod pygen;
+mod rsblock;
 mod rsgen;
 
 use frameworks::{Found, Support};
