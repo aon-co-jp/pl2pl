@@ -410,3 +410,9 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
 - `EXEC SQL PREPARE 名 FROM :変数` で SQL 文を名前つきで保存し、`EXEC SQL EXECUTE 名 [USING :a, :b]` で `?` に値を渡して実行できます(Python・Rust 両方)。未準備の名前を実行すると SQLCODE は -518 です。
 - 試験は24件成功。生成した Python を実行し、`INSERT ... VALUES (?)` に 5 を渡して SELECT で 5 が返ることを確認しました(`tests/samples/sql7.cbl`)。Rust は生成コードの確認のみです。
 - 未了: EXEC CICS、`DESCRIBE`/SQLDA を使う完全な動的 SQL。
+
+## 2026-11-23 追記: EXEC CICS の最小対応(日本語)
+- **調査(英語・日本語のWeb検索とGitHub)**: EXEC CICS を実際に Python/Rust へ変換するオープンソースは見つかりませんでした。多くのツールは CICS 部分に TODO を付けて人手に任せ、`viper-mf` は CICS を変換せずエミュレーターで動かす方式、`cobol-py` は EXEC CICS を抜き出す解析だけです。
+- **実装**: `EXEC CICS SEND TEXT FROM(変数 または '文字列')` は表示に、`RETURN` と `ABEND` は終了にします。`READ FILE`・`XCTL`・`SEND MAP` など、ほかの命令は黙って落とさず「未対応」の TODO として残します。
+- 試験は25件成功(`exec_cics_minimal`)。生成した Python の文字列確認までで、画面(BMS マップ)の再現はしていません。
+- 未了: SEND/RECEIVE MAP(BMS)、READ/WRITE FILE、XCTL/LINK、COMMAREA。

@@ -938,6 +938,30 @@ impl P {
         v
     }
 
+    /// EXEC CICS の最小対応: SEND TEXT FROM(x) は表示、RETURN / ABEND は終了。ほかは TODO(黙って落とさない)
+    fn cics_stmt(&mut self, toks: &[String]) -> Stmt {
+        let up: Vec<String> = toks.iter().map(|t| t.to_uppercase()).collect();
+        let w = |k: usize| up.get(k).map(|x| x.as_str()).unwrap_or("");
+        match (w(0), w(1)) {
+            ("RETURN", _) | ("ABEND", _) => Stmt::Stop,
+            ("SEND", "TEXT") => {
+                // FROM ( 値 ) の値: 引用符つきなら文字列、そうでなければ変数
+                let f = up.iter().position(|x| x == "FROM");
+                let val = f.and_then(|f| if w(f + 1) == "(" { toks.get(f + 2) } else { None });
+                match val {
+                    Some(v) if v.starts_with('"') || v.starts_with('\'') => Stmt::Display(vec![Expr::Str(v.trim_matches(|c| c == '"' || c == '\'').to_string())]),
+                    Some(v) => {
+                        let n = ident(v);
+                        self.used.insert(n.clone());
+                        Stmt::Display(vec![Expr::Var(n)])
+                    }
+                    None => Stmt::Todo("EXEC CICS SEND TEXT に FROM(...) が無い".into()),
+                }
+            }
+            _ => Stmt::Todo(format!("EXEC CICS {} は未対応(SEND TEXT / RETURN / ABEND のみ)", toks.iter().take(2).cloned().collect::<Vec<_>>().join(" "))),
+        }
+    }
+
     fn statement(&mut self) -> Option<Stmt> {
         let t = self.peek()?.clone();
         let u = t.s.to_uppercase();
@@ -1881,6 +1905,22 @@ impl P {
             }
             "EXEC" => {
                 let kind = self.up(1);
+                if kind == "CICS" {
+                    self.next();
+                    self.next();
+                    let mut toks: Vec<String> = vec![];
+                    while let Some(t) = self.peek() {
+                        if t.s.to_uppercase().starts_with("END-EXEC") {
+                            let d = t.dot;
+                            self.next();
+                            self.ended = d;
+                            break;
+                        }
+                        toks.push(t.s.clone());
+                        self.next();
+                    }
+                    return Some(self.cics_stmt(&toks));
+                }
                 if kind != "SQL" {
                     self.skip_through("END-EXEC");
                     return Some(Stmt::Todo(format!("EXEC {kind}(CICS など)は未対応")));
@@ -3817,7 +3857,7 @@ mod tests {
         assert!(py.contains("SQL_HANDLER") && !py.contains("TODO(COBOL_to)"), "{py}");
         assert!(to_rust(&p).contains("pub fn set_sql_handler"));
         // 対応しない形は黙って落とさず TODO に残す
-        let w = parse("       PROGRAM-ID. W.\n       PROCEDURE DIVISION.\n           EXEC CICS RETURN END-EXEC.\n           STOP RUN.\n", false);
+        let w = parse("       PROGRAM-ID. W.\n       PROCEDURE DIVISION.\n           EXEC CICS XCTL PROGRAM('X') END-EXEC.\n           STOP RUN.\n", false);
         let todos = w.stmts.iter().filter(|s| matches!(s, Stmt::Todo(_))).count();
         assert_eq!(todos, 1, "{:?}", w.stmts);
     }
@@ -3877,6 +3917,26 @@ mod tests {
             assert!(o.status.success() && s.contains("'5"), "{s} {}", String::from_utf8_lossy(&o.stderr));
         }
         assert!(to_rust(&p).contains("sql_prep"));
+    }
+
+    #[test]
+    fn exec_cics_minimal() {
+        let src = "       IDENTIFICATION DIVISION.
+       PROGRAM-ID. C1.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 WS-MSG PIC X(10) VALUE \"HELLO\".
+       PROCEDURE DIVISION.
+           EXEC CICS SEND TEXT FROM(WS-MSG) ERASE END-EXEC.
+           EXEC CICS SEND TEXT FROM('BYE') END-EXEC.
+           EXEC CICS READ FILE('F') END-EXEC.
+           EXEC CICS RETURN END-EXEC.
+";
+        let p = parse(src, false);
+        let py = to_python(&p);
+        assert!(py.contains("self.ws_msg") && py.contains("BYE"), "{py}");
+        assert!(py.contains("EXEC CICS READ FILE") && py.contains("未対応"), "{py}");
+        assert!(!py.contains("EXEC CICS(CICS"), "{py}");
     }
 
     #[test]
