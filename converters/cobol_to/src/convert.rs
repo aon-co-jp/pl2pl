@@ -70,6 +70,7 @@ pub enum Stmt {
     Write(String, Option<Expr>),              // レコード名, FROM
     InspectScoped(String, Inspect, Option<Expr>, Option<Expr>), // INSPECT ... AFTER INITIAL a BEFORE INITIAL b
     SizeErr(Box<Stmt>, Vec<Stmt>, Vec<Stmt>), // 算術文, ON SIZE ERROR, NOT ON SIZE ERROR
+    SortFile(String, Vec<(String, bool)>, Vec<String>, Vec<String>), // SORT: 整列用ファイル, (キー項目, 昇順か), USING, GIVING
     Stop,
     Nop,
     Todo(String),
@@ -1421,6 +1422,70 @@ impl P {
                     Stmt::Todo(format!("SEARCH: {e}"))
                 })
             }
+            "SORT" => {
+                self.next();
+                let r: Result<Stmt, String> = (|| {
+                    let sd = ident(&self.next().ok_or("SORT の整列用ファイル名が無い")?.s);
+                    let mut keys: Vec<(String, bool)> = vec![];
+                    let (mut using, mut giving): (Vec<String>, Vec<String>) = (vec![], vec![]);
+                    let stop = |w: &str| matches!(w, "USING" | "GIVING" | "INPUT" | "OUTPUT" | "WITH" | "COLLATING" | "DUPLICATES");
+                    loop {
+                        let w = self.word();
+                        if w == "ON" {
+                            self.next();
+                            continue;
+                        }
+                        if w == "ASCENDING" || w == "DESCENDING" {
+                            let asc = w == "ASCENDING";
+                            self.next();
+                            if self.word() == "KEY" {
+                                self.next();
+                            }
+                            while !self.ended && !stop(&self.word()) && !matches!(self.word().as_str(), "ASCENDING" | "DESCENDING" | "ON") && self.peek().is_some() {
+                                keys.push((ident(&self.next().unwrap().s), asc));
+                            }
+                            continue;
+                        }
+                        if w == "WITH" || w == "DUPLICATES" || w == "IN" || w == "ORDER" {
+                            self.next();
+                            continue;
+                        }
+                        break;
+                    }
+                    if self.word() == "INPUT" || self.word() == "OUTPUT" {
+                        return Err("INPUT/OUTPUT PROCEDURE は未対応".into());
+                    }
+                    if self.word() == "USING" {
+                        self.next();
+                        while !self.ended && self.word() != "GIVING" && self.peek().is_some() {
+                            using.push(ident(&self.next().unwrap().s));
+                        }
+                    }
+                    if self.word() == "GIVING" {
+                        self.next();
+                        loop {
+                            let t = self.next().ok_or("GIVING のファイル名が無い")?;
+                            giving.push(ident(&t.s));
+                            if self.ended || self.peek().is_none() {
+                                break;
+                            }
+                        }
+                    }
+                    if keys.is_empty() || using.is_empty() || giving.is_empty() {
+                        return Err("SORT は ON ... KEY / USING / GIVING が揃った形のみ対応".into());
+                    }
+                    for f in using.iter().chain(giving.iter()) {
+                        if !self.files.iter().any(|x| &x.name == f) {
+                            return Err(format!("SORT: ファイル {f} が SELECT で宣言されていない"));
+                        }
+                    }
+                    Ok(Stmt::SortFile(sd, keys, using, giving))
+                })();
+                r.unwrap_or_else(|e| {
+                    self.skip_to_end(&[]);
+                    Stmt::Todo(format!("SORT: {e}"))
+                })
+            }
             "CALL" => {
                 self.next();
                 let r: Result<Stmt, String> = (|| {
@@ -1776,7 +1841,7 @@ pub fn parse(src: &str, free: bool) -> Program {
             }
             p.files.push(f);
             i = end;
-        } else if u == "FD" {
+        } else if u == "FD" || u == "SD" {
             let n = ident(toks.get(i + 1).map(|t| t.s.trim_end_matches('.')).unwrap_or(""));
             cur_fd = p.files.iter().position(|f| f.name == n);
             if cur_fd.is_none() {
@@ -2696,6 +2761,59 @@ fn emit(p: &Program, ss: &[Stmt], l: Lang, ind: usize, o: &mut String) {
                     Lang::Rs => o.push_str(&format!("{pad}self.wr_{f}();\n")),
                 }
             }
+            Stmt::SortFile(sd, keys, using, giving) => {
+                // キー項目の位置と幅は、整列用ファイル(SD)の項目並びから求める。SD が無ければ USING の先頭のファイルを使う
+                let layout = p.files.iter().find(|f| &f.name == sd).or_else(|| p.files.iter().find(|f| f.name == using[0]));
+                let mut ks: Vec<(usize, usize, bool, bool)> = vec![];
+                let mut missing: Option<String> = None;
+                for (k, asc) in keys {
+                    let mut off = 0usize;
+                    let mut hit = None;
+                    if let Some(fd) = layout {
+                        for fld in &fd.fields {
+                            let v = var_of(p, fld);
+                            let w = v.map(|x| x.width.max(1)).unwrap_or(1);
+                            if ident(fld) == *k {
+                                hit = Some((off, w, v.map(|x| x.numeric).unwrap_or(false), !*asc));
+                            }
+                            off += w;
+                        }
+                    }
+                    match hit {
+                        Some(h) => ks.push(h),
+                        None => missing = Some(k.clone()),
+                    }
+                }
+                if let Some(k) = missing {
+                    o.push_str(&format!("{pad}{} TODO(COBOL_to): SORT のキー {k} がレコードの項目に無い\n", if py { "#" } else { "//" }));
+                } else if py {
+                    let kl = ks.iter().map(|(a, b, c, d)| format!("({a}, {b}, {}, {})", if *c { "True" } else { "False" }, if *d { "True" } else { "False" })).collect::<Vec<_>>().join(", ");
+                    let ul = using.iter().map(|f| format!("{f:?}")).collect::<Vec<_>>().join(", ");
+                    let gl = giving.iter().map(|f| format!("{f:?}")).collect::<Vec<_>>().join(", ");
+                    o.push_str(&format!("{pad}_recs = []\n"));
+                    o.push_str(&format!("{pad}for _n in [{ul}]:\n{pad}    with open(_FILES[_n][\"path\"], \"r\", encoding=\"utf-8\", newline=\"\") as _h:\n{pad}        _recs += [_l.rstrip(\"\\r\\n\") for _l in _h]\n"));
+                    o.push_str(&format!("{pad}for _o, _w, _nm, _ds in reversed([{kl}]):\n"));
+                    o.push_str(&format!("{pad}    _recs.sort(key=(lambda r, _o=_o, _w=_w: _num(r[_o:_o + _w])) if _nm else (lambda r, _o=_o, _w=_w: r[_o:_o + _w]), reverse=_ds)\n"));
+                    o.push_str(&format!("{pad}for _n in [{gl}]:\n{pad}    with open(_FILES[_n][\"path\"], \"w\", encoding=\"utf-8\", newline=\"\") as _h:\n{pad}        _h.write(\"\".join(_r + \"\\n\" for _r in _recs))\n"));
+                } else {
+                    let path_of = |n: &String| -> String {
+                        match p.files.iter().find(|f| &f.name == n) {
+                            Some(f) if f.assign_lit => format!("{:?}.to_string()", f.assign),
+                            Some(f) => format!("std::env::var({:?}).unwrap_or_else(|_| {:?}.to_string())", f.assign.to_uppercase(), f.assign.to_lowercase()),
+                            None => "String::new()".into(),
+                        }
+                    };
+                    let kl = ks.iter().map(|(a, b, c, d)| format!("({a}usize, {b}usize, {c}, {d})")).collect::<Vec<_>>().join(", ");
+                    let ul = using.iter().map(|f| path_of(f)).collect::<Vec<_>>().join(", ");
+                    let gl = giving.iter().map(|f| path_of(f)).collect::<Vec<_>>().join(", ");
+                    o.push_str(&format!("{pad}{{\n{pad}    let mut recs: Vec<String> = vec![];\n"));
+                    o.push_str(&format!("{pad}    for path in [{ul}] {{\n{pad}        if let Ok(t) = std::fs::read_to_string(&path) {{ for l in t.lines() {{ recs.push(l.trim_end_matches('\\r').to_string()); }} }}\n{pad}    }}\n"));
+                    o.push_str(&format!("{pad}    let keys: Vec<(usize, usize, bool, bool)> = vec![{kl}];\n"));
+                    o.push_str(&format!("{pad}    for &(off, w, num, desc) in keys.iter().rev() {{\n{pad}        recs.sort_by(|a, b| {{\n{pad}            let ka: String = a.chars().skip(off).take(w).collect();\n{pad}            let kb: String = b.chars().skip(off).take(w).collect();\n{pad}            let c = if num {{ ka.trim().parse::<i64>().unwrap_or(0).cmp(&kb.trim().parse::<i64>().unwrap_or(0)) }} else {{ ka.cmp(&kb) }};\n{pad}            if desc {{ c.reverse() }} else {{ c }}\n{pad}        }});\n{pad}    }}\n"));
+                    o.push_str(&format!("{pad}    let body: String = recs.iter().map(|r| format!(\"{{}}\\n\", r)).collect();\n"));
+                    o.push_str(&format!("{pad}    for path in [{gl}] {{ let _ = std::fs::write(&path, &body); }}\n{pad}}}\n"));
+                }
+            }
             Stmt::SizeErr(inner, err, ok) => size_emit(p, inner, err, ok, l, ind, o),
             Stmt::Stop => o.push_str(&match l {
                 Lang::Py => format!("{pad}return 1\n"),
@@ -3068,6 +3186,16 @@ mod tests {
         assert!(p.stmts.iter().any(|s| matches!(s, Stmt::InspectScoped(..))), "{:?}", p.stmts);
         assert!(to_python(&p).contains("_t.find(_a)"));
         assert!(to_rust(&p).contains("t0.find(a0.as_str())"));
+    }
+
+    #[test]
+    fn sort_using_giving() {
+        let src = std::fs::read_to_string("tests/samples/sort1.cbl").unwrap();
+        let p = parse(&src, false);
+        assert!(p.stmts.iter().chain(p.paragraphs.iter().flat_map(|x| x.1.iter())).any(|s| matches!(s, Stmt::SortFile(..))), "{:?}", p.paragraphs);
+        assert!(!to_python(&p).contains("TODO(COBOL_to)"));
+        assert!(to_python(&p).contains("reversed(["));
+        assert!(to_rust(&p).contains("sort_by"));
     }
 
     #[test]
