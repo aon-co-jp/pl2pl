@@ -319,3 +319,9 @@ English: Techniques for running AI stably and fast on machines with no or little
 **Status**: Collectors coverage is now complete for the common cases: `toList`/`toSet`/`joining`/`toMap` (with a merge function)/`groupingBy` (downstream `counting`, `summingInt`, `mapping`)/`partitioningBy` (with `counting`)/`averagingInt`. Method references and `Comparator` (`comparing`/`thenComparing`/`reversed`) are supported too. Unit tests run the generated Python and check results (Java_to 23, pl2pl 55 pass).
 **Still open**: anonymous classes, Rust-side method bodies (currently a simple return only), end-to-end runs on real projects such as Spring PetClinic, and other `groupingBy` downstream collectors (`reducing`, etc.).
 **Issues**: intermediate results are evaluated eagerly as lists, so infinite or lazy streams are out of scope; real-project verification is not done.
+
+## 2026-11-22 再開用メモ(pl2pl・日本語)
+**現状**: `pl2pl web --backend ...`(COBOL・C・C++・Fortran→Web)、`pl2pl c2rust`・`f2rust`、`pl2pl cobol --os` は動作済み。`converters/cobol_to`(WHENEVER・指示変数まで)と `converters/java_to`(Collectors・匿名クラス・Rust側の本体変換)は元の COBOL_to / Java_to と同期済み(試験: COBOL_to 20・Java_to 24・pl2pl 55)。
+**未了(この順、確認不要)**: (1)Java_to の Rust 側(状態を持つ匿名クラス・`reducing`)、(2)COBOL_to の INDICATOR 句・SQLSTATE・動的SQL・EXEC CICS、(3)姉妹(RPoRea・Reaxt・RPoem・RMojo)での通し試験、(4)gfortran 以外の実機確認、Mac・iPhone 実機(実機なし)。
+**決まり**: 本物で確認してから「完了」/秘密は書かない/新しいRESTは作らない/元の COBOL_to・Java_to の削除だけ最後に本人確認/VPS用ビルドは `Ubuntu-24.04`/変換器を直したら `converters/` へ同期。
+**再開用メッセージ**: 前の続きです。`F:\pl2pl\PORTING.md` 末尾「2026-11-22 再開用メモ」を読んで、上の未了を確認なしで順に進めてください。返答は日本語のみ。
