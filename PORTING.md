@@ -421,3 +421,7 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
 - Rust(Poem / RPoem)側のメソッド本体で、`List<Integer> xs = new ArrayList<>();`(`Vec<i32>` になる。`Integer` などの箱型は基本型に直す)、`xs.add(x);`(`push`)、`xs.get(i)`(添字アクセス)、拡張 for `for (int x : xs)` を変換できるようにしました。`xs.size()` は従来どおり `len()` です。
 - 単体テストは32件成功(`list_operations`、生成された Rust の文字列確認)。生成 Rust のコンパイル確認(`tests/run-rust.sh`)はこの追加分では未実施です。
 - 未了: Map や Stream を含む Rust 本体、Spring PetClinic など実プロジェクトでの通し確認。
+
+## 2026-11-23 追記: List 操作の生成 Rust をコンパイル確認(日本語)
+- 前回の List 操作(宣言・`add`・`get`・拡張 for)を、Spring サンプルに `/squares/{n}` を足して実際に変換し、WSL で `tests/run-rust.sh` を実行しました。生成された Rust(`Vec<i32>`、`push`、`for x in xs.clone()`、`xs.len()`)は、spring・jaxrs・servlet・spark の4つとも `cargo check` に通りました。
+- 実行して値を確かめるところまでは未了です。未了: Map や Stream を含む Rust 本体、Spring PetClinic など実プロジェクトでの通し確認。
