@@ -1382,6 +1382,20 @@ impl<'a> Tr<'a> {
                 let sep = if sep.is_empty() { "\"\"".to_string() } else { sep };
                 e(format!("{sep}.join(map(str, {r}))"), "String")
             }
+            ("collect", 1) if !self.user_method(name) && a[0].starts_with("Collectors.grouping_by(") => {
+                let inner = a[0].trim_start_matches("Collectors.grouping_by(").trim_end_matches(')').to_string();
+                let (f, counting) = match inner.strip_suffix(", Collectors.counting(") {
+                    Some(f) => (f.to_string(), true),
+                    None => (inner.clone(), false),
+                };
+                let val = if counting { "len([x for x in _l if _f(x) == k])" } else { "[x for x in _l if _f(x) == k]" };
+                e(format!("(lambda _l, _f: {{k: {val} for k in dict.fromkeys(map(_f, _l))}})({r}, {f})"), "")
+            }
+            ("thenComparing", 1) | ("thenComparingInt", 1) | ("thenComparingDouble", 1) | ("thenComparingLong", 1) if r.starts_with("(lambda a, b:") => {
+                let head = a[0].split(':').next().unwrap_or("");
+                let k = if head.contains(',') { format!("({})(a, b)", a[0]) } else { format!("(lambda _k: (_k(a) > _k(b)) - (_k(a) < _k(b)))({})", a[0]) };
+                e(format!("(lambda a, b: ({r})(a, b) or {k})"), "")
+            }
             ("sorted", _) | ("reduce", _) | ("collect", 1) | ("stream", 0) => {
                 self.c.notes.push(format!("Stream API(.{name}) のこの形は未対応"));
                 e(format!("{r}.{}({})", snake(name), a.join(", ")), "")
@@ -1741,6 +1755,20 @@ print(a, b, c, d, t)
             if o.status.success() {
                 assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "[2, 1, 3] ['ccc', 'bb', 'a'] ['ccc', 'bb', 'a'] ['BB', 'A', 'CCC'] 6", "{prog}");
             }
+        }
+    }
+    #[test]
+    fn grouping_and_then_comparing() {
+        let p = tb("List<String> xs = new ArrayList<>(); Map<Integer, List<String>> g = xs.stream().collect(Collectors.groupingBy(String::length)); Map<Integer, Long> n = xs.stream().collect(Collectors.groupingBy(String::length, Collectors.counting())); List<String> s = xs.stream().sorted(Comparator.comparing(String::length).thenComparing(Comparator.naturalOrder())).collect(Collectors.toList());");
+        assert!(!p.contains("未対応"), "{p}");
+        let p = p.lines().map(|l| l.trim_start()).collect::<Vec<_>>().join("\n");
+        let prog = format!("{}
+print(g, n, s)
+", p.replacen("xs = []", "xs = [\"bb\", \"a\", \"cc\", \"ddd\", \"b\"]", 1));
+        if let Ok(o) = std::process::Command::new("python").args(["-c", &prog]).output() {
+            assert!(o.status.success(), "{prog}
+{}", String::from_utf8_lossy(&o.stderr));
+            assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "{2: ['bb', 'cc'], 1: ['a', 'b'], 3: ['ddd']} {2: 2, 1: 2, 3: 1} ['a', 'b', 'bb', 'cc', 'ddd']", "{prog}");
         }
     }
     #[test]
