@@ -395,3 +395,8 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
 
 ## 2026-11-22 追記: SQLSTATE (日本語)
 ソースに `SQLSTATE` が出てくるプログラムでは、SQL 文のたびに `SQLSTATE`(PIC X(5)、未宣言なら自動で追加)を SQLCODE から導きます(0→`00000`、100→`02000`、それ以外→`HY000`)。生成した Python を実際に動かし、`00000` と `02000` が出ることを確認しました(`tests/samples/sql5.cbl`、試験22件成功)。DBごとの細かい状態コードの対応は未了です。残り: 動的SQL・EXEC CICS。
+
+## 2026-11-22 追記: EXECUTE IMMEDIATE(動的 SQL・日本語)
+- `EXEC SQL EXECUTE IMMEDIATE :変数 END-EXEC` に対応しました。SQL 文を変数の中身(前後の空白は除去)から実行し、SQLCODE を更新します(Python・Rust 両方)。文字列定数を直接渡す形は通常の SQL 文として扱います。
+- 試験は23件成功。生成した Python を実行し、CREATE・INSERT・SELECT の結果 `0` と `7` が出ることを確認しました(`tests/samples/sql6.cbl`)。Rust は生成コードの確認のみで、実行は未確認です。
+- 未了: PREPARE/EXECUTE(`?` の引数つき)、EXEC CICS。

@@ -82,6 +82,7 @@ pub enum Stmt {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SqlKind {
     Exec,          // INSERT / UPDATE / DELETE / COMMIT など(結果の行は使わない)
+    ExecDyn,       // EXECUTE IMMEDIATE :変数(SQL 文を変数の中身から実行。sql 欄に変数名)
     Select,        // SELECT ... INTO(先頭の1行を取る)
     Open(String),  // OPEN カーソル(問い合わせを実行して行を保持)
     Fetch(String), // FETCH カーソル INTO
@@ -447,6 +448,16 @@ impl P {
                 let i = up.iter().position(|w| w == "INTO").ok_or("FETCH に INTO が無い")?;
                 let into = self.sql_into_vars(&toks[i + 1..])?;
                 Ok(Stmt::Sql(SqlKind::Fetch(name), String::new(), vec![], into))
+            }
+            "EXECUTE" if up.get(1).map(|w| w.as_str()) == Some("IMMEDIATE") => {
+                match toks.get(2) {
+                    Some(t) if t.starts_with(':') && toks.len() == 3 => Ok(Stmt::Sql(SqlKind::ExecDyn, ident(&t[1..]), vec![], vec![])),
+                    Some(_) => {
+                        let (sql, params) = self.sql_text(&toks[2..])?;
+                        Ok(Stmt::Sql(SqlKind::Exec, sql, params, vec![]))
+                    }
+                    None => Err("EXECUTE IMMEDIATE の SQL が無い".into()),
+                }
             }
             "CLOSE" => Ok(Stmt::Sql(SqlKind::Close(cursor(toks.get(1))?), String::new(), vec![], vec![])),
             "SELECT" => {
@@ -3315,6 +3326,14 @@ fn emit(p: &Program, ss: &[Stmt], l: Lang, ind: usize, o: &mut String) {
                 match (kind, l) {
                     (SqlKind::Exec, Lang::Py) => o.push_str(&format!("{pad}_c, _r = SQL_HANDLER({sql:?}, [{}])\n{pad}self.{sc} = _c\n", plist(l))),
                     (SqlKind::Exec, Lang::Rs) => o.push_str(&format!("{pad}{{ let (c, _r) = sql_call({sql:?}, vec![{}]); self.{sc} = c; }}\n", plist(l))),
+                    (SqlKind::ExecDyn, Lang::Py) => {
+                        let d = disp(p, &Expr::Var(sql.clone()), l);
+                        o.push_str(&format!("{pad}_c, _r = SQL_HANDLER(str({d}).strip(), [])\n{pad}self.{sc} = _c\n"))
+                    }
+                    (SqlKind::ExecDyn, Lang::Rs) => {
+                        let d = disp(p, &Expr::Var(sql.clone()), l);
+                        o.push_str(&format!("{pad}{{ let q = format!(\"{{}}\", {d}); let (c, _r) = sql_call(q.trim(), vec![]); self.{sc} = c; }}\n"))
+                    }
                     (SqlKind::Select, Lang::Py) => {
                         o.push_str(&format!("{pad}_c, _r = SQL_HANDLER({sql:?}, [{}])\n{pad}self.{sc} = _c if _c else (0 if _r else 100)\n{pad}if _c == 0 and _r:\n", plist(l)));
                         o.push_str(&assigns("_r[0]", l));
@@ -3793,6 +3812,27 @@ mod tests {
         assert!(py.contains("\"HY000\"") && py.contains("\"02000\"") && py.contains("\"00000\""), "{py}");
         assert!(!py.contains("TODO(COBOL_to)"), "{py}");
         assert!(to_rust(&p).contains("02000"));
+    }
+
+    #[test]
+    fn execute_immediate_host_variable() {
+        let p = parse(&std::fs::read_to_string("tests/samples/sql6.cbl").unwrap(), false);
+        let py = to_python(&p);
+        assert!(!py.contains("TODO(COBOL_to)"), "{py}");
+        assert!(py.contains(".strip(), [])"), "{py}");
+        let dir = std::env::temp_dir().join("cobol_to_sql6");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("sql6.py");
+        std::fs::write(&f, &py).unwrap();
+        let _ = std::fs::remove_file(dir.join("t.db"));
+        let out = std::process::Command::new("python").current_dir(&dir).args(["-c", "import sql6;print(repr(sql6.run()))"]).env("COBOL_SQL_DB", dir.join("t.db")).output();
+        if let Ok(o) = out {
+            if o.status.success() {
+                let s = String::from_utf8_lossy(&o.stdout).to_string();
+                assert!(s.contains("0\\n7\\n"), "{s}");
+            }
+        }
+        assert!(to_rust(&p).contains("q.trim()"));
     }
 
     #[test]
