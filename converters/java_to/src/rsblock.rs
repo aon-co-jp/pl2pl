@@ -59,6 +59,7 @@ fn rs_expr(toks: &[Tok], vars: &[(String, String)], locals: &HashSet<String>) ->
                         ("startsWith", [x]) => format!("{rv}.starts_with({x}.as_str())"),
                         ("endsWith", [x]) => format!("{rv}.ends_with({x}.as_str())"),
                         ("equals", [x]) => format!("({rv} == {x})"),
+                        ("get", [x]) => format!("{rv}[({x}) as usize].clone()"),
                         _ => return None,
                     }
                 };
@@ -170,6 +171,18 @@ pub fn rs_block(toks: &[Tok], vars: &[(String, String)], locals: &mut HashSet<St
             let c = match_close(toks, i + 1, "(", ")")?;
             let sp = crate::parse::split_top(&toks[i + 2..c], ";");
             let (b, next) = sub_stmt(toks, c + 1)?;
+            // 拡張 for: for (int x : xs)
+            if let [Tok::Id(_), Tok::Id(v), colon, Tok::Id(coll)] = &toks[i + 2..c] {
+                if colon.is(":") && locals.contains(coll) {
+                    let mut inner = locals.clone();
+                    inner.insert(v.clone());
+                    out.push_str(&format!("{ind}for {} in {}.clone() {{
+{}{ind}}}
+", rust_ident(v), rust_ident(coll), rs_block(b, vars, &mut inner, dtos, depth + 1)?));
+                    i = next;
+                    continue;
+                }
+            }
             if !(sp.len() == 3 && sp[0].len() >= 4 && is_type_start(&sp[0][0]) && sp[0][2].is("=")) {
                 return None;
             }
@@ -189,6 +202,33 @@ pub fn rs_block(toks: &[Tok], vars: &[(String, String)], locals: &mut HashSet<St
             let range = if op == "<" { format!("{from}..{to}") } else { format!("{from}..={to}") };
             out.push_str(&format!("{ind}for {} in {range} {{\n{}{ind}}}\n", rust_ident(v), rs_block(b, vars, &mut inner, dtos, depth + 1)?));
             i = next;
+        } else if (t.id("List") || t.id("ArrayList")) && matches!(toks.get(i + 1), Some(x) if x.is("<")) && matches!(toks.get(i + 3), Some(x) if x.is(">")) {
+            // List<T> xs = new ArrayList<>();
+            let (Tok::Id(ety), Some(Tok::Id(v))) = (&toks[i + 2], toks.get(i + 4)) else { return None };
+            if !toks.get(i + 5).is_some_and(|x| x.is("=")) || !toks.get(i + 6).is_some_and(|x| x.id("new")) {
+                return None;
+            }
+            let e = stmt_end(toks, i)?;
+            let ok = toks[i + 7..e].iter().all(|x| match x {
+                Tok::Id(n) => n == "ArrayList" || n == "LinkedList" || n == ety,
+                Tok::P(p) => matches!(p.as_str(), "<" | ">" | "<>" | "(" | ")"),
+                _ => false,
+            });
+            if !ok {
+                return None;
+            }
+            locals.insert(v.clone());
+            out.push_str(&format!("{ind}let mut {}: Vec<{}> = Vec::new();
+", rust_ident(v), rs_type(match ety.as_str() { "Integer" => "int", "Long" => "long", "Double" => "double", "Float" => "float", "Boolean" => "boolean", o => o }, dtos)));
+            i = e + 1;
+        } else if matches!((t, toks.get(i + 1), toks.get(i + 2), toks.get(i + 3)), (Tok::Id(v), Some(d), Some(m), Some(o)) if locals.contains(v) && d.is(".") && m.id("add") && o.is("(")) {
+            // xs.add(x);
+            let Tok::Id(v) = t else { return None };
+            let cl = match_close(toks, i + 3, "(", ")")?;
+            let arg = rs_expr(&toks[i + 4..cl], vars, locals)?;
+            out.push_str(&format!("{ind}{}.push({arg});
+", rust_ident(v)));
+            i = stmt_end(toks, i)? + 1;
         } else if is_type_start(t) && matches!(toks.get(i + 1), Some(Tok::Id(_))) && toks.get(i + 2).is_some_and(|x| x.is("=") || x.is(";")) {
             let (Tok::Id(ty), Tok::Id(v)) = (t, &toks[i + 1]) else { return None };
             let e = stmt_end(toks, i)?;
@@ -238,6 +278,15 @@ mod tests {
     fn strings() {
         let r = run("String g = \"hi \" + n; return g + \"!\";").unwrap();
         assert!(r.contains("format!(\"hi {}\", n)"));
+    }
+    #[test]
+    fn list_operations() {
+        let r = run("List<Integer> xs = new ArrayList<>(); for (int i = 0; i < n; i++) { xs.add(i * 2); } int s = 0; for (int x : xs) { s += x; } int f = xs.get(0); return s + xs.size() + f;").unwrap();
+        assert!(r.contains("let mut xs: Vec<i32> = Vec::new();"), "{r}");
+        assert!(r.contains("xs.push("), "{r}");
+        assert!(r.contains("for x in xs.clone()"), "{r}");
+        assert!(r.contains("xs[(0) as usize].clone()"), "{r}");
+        assert!(r.contains("xs.len() as i32"), "{r}");
     }
     #[test]
     fn method_calls() {
