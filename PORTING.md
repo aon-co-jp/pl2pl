@@ -392,3 +392,6 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
 
 ## 2026-11-22 追記: INDICATOR キーワード形 (日本語)
 `:変数 INDICATOR :指示変数` の形を、`:変数:指示変数` と同じに扱うようにしました(パラメーターと `INTO` の両方)。`tests/samples/sql4.cbl` で、Python・Rust とも `sql3.cbl` と同じ出力になることを試験しました(21件成功)。固定形式の72桁を超える行は切り捨てられるため、長い EXEC SQL は折り返して書きます。残り: SQLSTATE・動的SQL・EXEC CICS。
+
+## 2026-11-22 追記: SQLSTATE (日本語)
+ソースに `SQLSTATE` が出てくるプログラムでは、SQL 文のたびに `SQLSTATE`(PIC X(5)、未宣言なら自動で追加)を SQLCODE から導きます(0→`00000`、100→`02000`、それ以外→`HY000`)。生成した Python を実際に動かし、`00000` と `02000` が出ることを確認しました(`tests/samples/sql5.cbl`、試験22件成功)。DBごとの細かい状態コードの対応は未了です。残り: 動的SQL・EXEC CICS。
