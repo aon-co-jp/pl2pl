@@ -28,10 +28,11 @@ pub struct Loaded {
     pub units: Vec<parse::Unit>,
     pub extra: Vec<(String, String)>,
     pub skipped: Vec<String>,
+    pub openapi: Vec<endpoints::ApiOp>, // openapi.yml の操作(OpenAPI 先行のプロジェクト用)
 }
 
 fn load(dir: &Path) -> Loaded {
-    let mut l = Loaded { units: vec![], extra: vec![], skipped: vec![] };
+    let mut l = Loaded { units: vec![], extra: vec![], skipped: vec![], openapi: vec![] };
     let walker = walkdir::WalkDir::new(dir).into_iter().filter_entry(|e| {
         let n = e.file_name().to_string_lossy();
         !(e.file_type().is_dir() && matches!(n.as_ref(), "target" | "build" | "node_modules" | ".git" | ".gradle" | ".idea" | "out"))
@@ -49,6 +50,11 @@ fn load(dir: &Path) -> Loaded {
             // Shift_JIS/EUC-JP など(2000年代の日本の資産に多い)は読めないので、ASCII 部分だけ拾う
             bytes.iter().map(|b| if b.is_ascii() { *b as char } else { '?' }).collect()
         });
+        let base = lower.replace('\\', "/");
+        let base = base.rsplit('/').next().unwrap_or("").to_string();
+        if matches!(base.as_str(), "openapi.yml" | "openapi.yaml" | "swagger.yml" | "swagger.yaml") {
+            l.openapi.extend(endpoints::parse_openapi(&text));
+        }
         if lower.ends_with(".java") {
             l.units.push(parse::parse_unit(&name, &text));
         } else if lower.ends_with("pom.xml") || lower.ends_with(".gradle") || lower.ends_with(".gradle.kts") || lower.ends_with("web.xml") || lower.ends_with("struts.xml") || lower.ends_with("struts-config.xml") || lower.ends_with("faces-config.xml") || lower.replace('\\', "/").ends_with("conf/routes") || lower.ends_with("applicationcontext.xml") || lower.ends_with("persistence.xml") || lower.ends_with("seasar.dicon") || lower.ends_with(".dicon") {
@@ -134,7 +140,7 @@ fn main() {
             let l = load(&dir);
             let found = frameworks::detect(&l.units, &l.extra);
             let mut warnings = vec![];
-            let eps = endpoints::extract(&l.units, &mut warnings);
+            let eps = endpoints::extract_with(&l.units, &mut warnings, &l.openapi);
             println!("Java ファイル {} 件、ルート {} 本", l.units.len(), eps.len());
             print_found(&found);
             for e in &eps {

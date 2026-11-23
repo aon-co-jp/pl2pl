@@ -247,12 +247,56 @@ pub fn query_names(body: &[Tok]) -> Vec<String> {
     collect_str_calls(body, &["getParameter", "queryParams", "queryParam", "queryParamAsClass", "getParam", "param"])
 }
 
+/// OpenAPI(openapi.yml)の1操作。OpenAPI 先行の Spring(`implements XxxApi`)で、メソッド名=operationId から経路を引く。
+#[derive(Clone, Debug)]
+pub struct ApiOp {
+    pub op: String,
+    pub verb: String,
+    pub path: String,
+}
+
+/// openapi.yml から `paths:` の (operationId, 動詞, 経路) を取り出す(YAML の字下げだけを見る簡易版)。
+pub fn parse_openapi(text: &str) -> Vec<ApiOp> {
+    let mut out = vec![];
+    let mut in_paths = false;
+    let (mut path, mut verb) = (String::new(), String::new());
+    for line in text.lines() {
+        let t = line.trim_end();
+        if t.is_empty() || t.trim_start().starts_with('#') {
+            continue;
+        }
+        let ind = t.len() - t.trim_start().len();
+        let body = t.trim_start();
+        if ind == 0 {
+            in_paths = body == "paths:";
+            continue;
+        }
+        if !in_paths {
+            continue;
+        }
+        if ind == 2 && body.ends_with(':') && body.starts_with('/') {
+            path = body.trim_end_matches(':').trim_matches(|c| c == '\'' || c == '"').to_string();
+            verb.clear();
+        } else if ind == 4 && body.ends_with(':') && matches!(body.trim_end_matches(':'), "get" | "post" | "put" | "delete" | "patch" | "head" | "options") {
+            verb = body.trim_end_matches(':').to_string();
+        } else if ind == 6 && body.starts_with("operationId:") && !path.is_empty() && !verb.is_empty() {
+            let op = body["operationId:".len()..].trim().trim_matches(|c| c == '\'' || c == '"').to_string();
+            out.push(ApiOp { op, verb: verb.clone(), path: path.clone() });
+        }
+    }
+    out
+}
+
 pub fn extract(units: &[Unit], warnings: &mut Vec<String>) -> Vec<Endpoint> {
+    extract_with(units, warnings, &[])
+}
+
+pub fn extract_with(units: &[Unit], warnings: &mut Vec<String>, ops: &[ApiOp]) -> Vec<Endpoint> {
     let mut out = vec![];
     for u in units {
         let imps = u.imports.join(" ");
         for c in &u.classes {
-            extract_class(u, c, &imps, &mut out, warnings);
+            extract_class(u, c, &imps, &mut out, warnings, ops);
         }
         extract_lambda_routes(u, &imps, &mut out);
     }
@@ -280,7 +324,7 @@ fn fw_of(imps: &str, spring: bool) -> &'static str {
     }
 }
 
-fn extract_class(u: &Unit, c: &Class, imps: &str, out: &mut Vec<Endpoint>, warnings: &mut Vec<String>) {
+fn extract_class(u: &Unit, c: &Class, imps: &str, out: &mut Vec<Endpoint>, warnings: &mut Vec<String>, ops: &[ApiOp]) {
     let spring = c.has_ann(&["RestController", "Controller"]) && !imps.contains("io.micronaut");
     let micro = c.ann("Controller").is_some() && imps.contains("io.micronaut");
     let jaxrs = c.ann("Path").is_some() || c.methods.iter().any(|m| verb_of_jaxrs(m).is_some());
@@ -303,6 +347,40 @@ fn extract_class(u: &Unit, c: &Class, imps: &str, out: &mut Vec<Endpoint>, warni
                     lambda_params: vec![],
                     status: status_of(m),
                     notes: vec![],
+                });
+            } else if let (true, Some(op)) = (c.implements.iter().any(|i| i.ends_with("Api")), ops.iter().find(|o| o.op == m.name)) {
+                // OpenAPI 先行: 注釈は生成コード側にあるので、経路の {名前} と型から引数の種類を決める
+                let path = join_path("", &op.path);
+                let params = m
+                    .params
+                    .iter()
+                    .map(|p| {
+                        let mut e = spring_param(p, false);
+                        e.kind = if op.path.contains(&format!("{{{}}}", p.name)) {
+                            Kind::Path
+                        } else if is_simple(&p.ty) {
+                            Kind::Query
+                        } else {
+                            Kind::Body
+                        };
+                        e.required = e.kind != Kind::Query;
+                        e
+                    })
+                    .collect();
+                out.push(Endpoint {
+                    file: u.file.clone(),
+                    framework: fw_of(imps, true),
+                    class: c.name.clone(),
+                    method: m.name.clone(),
+                    verb: op.verb.clone(),
+                    path,
+                    params,
+                    ret: m.ret.clone(),
+                    lambda_body: None,
+                    lambda_is_expr: false,
+                    lambda_params: vec![],
+                    status: None,
+                    notes: vec!["OpenAPI(openapi.yml)の operationId から経路を決定".into()],
                 });
             }
         }
@@ -507,5 +585,40 @@ mod tests {
         assert_eq!(e[0].params[1].default.as_deref(), Some("a"));
         assert_eq!(e[1].path, "/hello/{name}");
         assert!(e[1].lambda_is_expr);
+    }
+
+    #[test]
+    fn openapi_first_routes() {
+        let y = "openapi: 3.0.1
+paths:
+  /owners/{ownerId}:
+    get:
+      operationId: getOwner
+    put:
+      operationId: updateOwner
+  /owners:
+    post:
+      operationId: addOwner
+components:
+  x: 1
+";
+        let ops = parse_openapi(y);
+        assert_eq!(ops.len(), 3, "{ops:?}");
+        let src = "import org.springframework.web.bind.annotation.RestController;
+@RestController
+public class OwnerCtl implements OwnersApi {
+  public ResponseEntity<OwnerDto> getOwner(Integer ownerId) { return null; }
+  public ResponseEntity<OwnerDto> updateOwner(Integer ownerId, OwnerDto dto) { return null; }
+  public ResponseEntity<OwnerDto> addOwner(OwnerDto dto) { return null; }
+}
+";
+        let u = crate::parse::parse_unit("O.java", src);
+        let mut w = vec![];
+        let e = extract_with(&[u], &mut w, &ops);
+        assert_eq!(e.len(), 3, "{e:?}");
+        let up = e.iter().find(|x| x.method == "updateOwner").unwrap();
+        assert_eq!((up.verb.as_str(), up.path.as_str()), ("put", "/owners/{ownerId}"));
+        assert_eq!(up.params[0].kind, Kind::Path);
+        assert_eq!(up.params[1].kind, Kind::Body);
     }
 }
