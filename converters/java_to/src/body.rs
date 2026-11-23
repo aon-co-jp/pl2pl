@@ -2191,6 +2191,32 @@ print(s)
         assert!(p.contains("type(e).__name__"), "{p}");
     }
     #[test]
+    fn derived_queries_in_memory_repo() {
+        let rt = include_str!("java_rt.py");
+        let lines = [
+            "class U:",
+            "    def __init__(self, i, name, age):",
+            "        self.id = i; self.name = name; self.age = age",
+            "r = InMemoryRepository()",
+            "for i, (n, a) in enumerate([('alice', 30), ('bob', 20), ('carol', 40)], 1):",
+            "    r.save(U(i, n, a))",
+            "def names(x): return [e.name for e in x]",
+            "print(names(r._derived('find_all_by_age_greater_than', [25])))",
+            "print(names(r._derived('find_all_by_name_or_age', ['bob', 40])))",
+            "print(names(r._derived('find_all_by_name_containing', ['o'])))",
+            "print(names(r._derived('find_all_by_age_between', [20, 30])))",
+            "print(names(r._derived('find_all_by_age_greater_than_order_by_name_desc', [0])))",
+            "print(r._derived('count_by_age_less_than', [35]))",
+        ];
+        let prog = format!("{rt}\n{}\n", lines.join("\n"));
+        if let Ok(o) = std::process::Command::new("python").args(["-c", &prog]).output() {
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+            let s = String::from_utf8_lossy(&o.stdout).replace('\r', "");
+            let want = "['alice', 'carol']\n['bob', 'carol']\n['bob', 'carol']\n['alice', 'bob']\n['carol', 'bob', 'alice']\n2\n";
+            assert_eq!(s, want);
+        }
+    }
+    #[test]
     fn if_for_return() {
         let p = tb("int total = 0; for (int i = 0; i < n; i++) { total += i; } if (total > 10 && flag) { return \"big\"; } else { return \"small\" + total; }");
         assert!(p.contains("total = 0"), "{p}");

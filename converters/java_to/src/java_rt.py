@@ -215,26 +215,75 @@ class InMemoryRepository:
         if not m:
             raise NotImplementedError(f"TODO(Java_to): 導出クエリ {name} を実装する")
         kind, rest = m.group(1), m.group(2)
-        props = re.split(r"_and_", rest)
-        if "_or_" in rest or any(p.endswith(("_containing", "_like", "_in", "_between", "_greater_than", "_less_than")) for p in props):
-            raise NotImplementedError(f"TODO(Java_to): 導出クエリ {name} の条件は未対応")
-        order_ignored = [re.sub(r"_order_by_.*$", "", p) for p in props]
+        # OrderBy を先に切り離す(`..._order_by_name_desc`)
+        order: list[tuple[str, bool]] = []
+        om = re.search(r"_order_by_(.+)$", rest)
+        if om:
+            rest = rest[: om.start()]
+            toks = om.group(1).split("_")
+            cur: list[str] = []
+            for t in toks:
+                if t in ("asc", "desc"):
+                    order.append(("".join(cur), t == "desc"))
+                    cur = []
+                else:
+                    cur.append(t)
+            if cur:
+                order.append(("".join(cur), False))
+        # 条件は `_or_` で分け、各項を `_and_` で分ける。条件ごとに演算子の接尾辞を見る
+        ops = [
+            ("_greater_than_equal", lambda x, y: x >= y, 1), ("_less_than_equal", lambda x, y: x <= y, 1),
+            ("_greater_than", lambda x, y: x > y, 1), ("_less_than", lambda x, y: x < y, 1),
+            ("_not_containing", lambda x, y: str(y) not in str(x), 1), ("_containing", lambda x, y: str(y) in str(x), 1),
+            ("_starting_with", lambda x, y: str(x).startswith(str(y)), 1), ("_ending_with", lambda x, y: str(x).endswith(str(y)), 1),
+            ("_ignore_case", lambda x, y: str(x).lower() == str(y).lower(), 1),
+            ("_not_in", lambda x, y: x not in y, 1), ("_in", lambda x, y: x in y, 1),
+            ("_between", lambda x, y: y[0] <= x <= y[1], 2), ("_is_null", lambda x, y: x is None, 0), ("_is_not_null", lambda x, y: x is not None, 0),
+            ("_not_like", lambda x, y: not _like(x, y), 1), ("_like", lambda x, y: _like(x, y), 1), ("_not", lambda x, y: x != y, 1),
+            ("_true", lambda x, y: x is True, 0), ("_false", lambda x, y: x is False, 0),
+        ]
+
+        def _like(x: Any, pat: Any) -> bool:
+            rx = "^" + re.escape(str(pat)).replace("%", ".*").replace("_", ".") + "$"
+            return re.match(rx, str(x)) is not None
+
+        conds: list[list[tuple[str, Any, int]]] = []
+        for grp in rest.split("_or_"):
+            cs = []
+            for p in grp.split("_and_"):
+                for suf, fn, n in ops:
+                    if p.endswith(suf):
+                        cs.append((p[: -len(suf)], fn, n))
+                        break
+                else:
+                    cs.append((p, (lambda x, y: x == y), 1))
+            conds.append(cs)
 
         def key(p: str) -> str:
             return p.replace("_", "").lower()
 
+        def attr_of(e: Any, p: str) -> Any:
+            for attr in dir(e):
+                if not attr.startswith("_") and key(attr) == key(p):
+                    return getattr(e, attr)
+            return None
+
         def match(e: Any) -> bool:
-            for p, a in zip(order_ignored, args):
-                found = None
-                for attr in dir(e):
-                    if not attr.startswith("_") and key(attr) == key(p):
-                        found = getattr(e, attr)
-                        break
-                if found != a:
-                    return False
-            return True
+            i = 0
+            for cs in conds:
+                ok = True
+                for p, fn, n in cs:
+                    a = args[i : i + n]
+                    i += n
+                    if ok:
+                        ok = fn(attr_of(e, p), a[0] if n == 1 else (a if n == 2 else None))
+                if ok:
+                    return True
+            return False
 
         hits = [e for e in self._items.values() if match(e)]
+        for name_, desc in reversed(order):
+            hits.sort(key=lambda e, n=name_: (attr_of(e, n) is None, attr_of(e, n)), reverse=desc)
         if kind.startswith("exists"):
             return bool(hits)
         if kind.startswith("count"):
