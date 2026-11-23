@@ -1432,6 +1432,8 @@ impl<'a> Tr<'a> {
                 if self.at("(") {
                     let args = self.args();
                     x = self.method_call(x, &name, args);
+                } else if name == "class" {
+                    // クラスリテラル `Foo.class` は Python ではクラスそのもの(`Foo`)
                 } else if name == "length" && x.ty.ends_with("[]") {
                     x = e(format!("len({})", x.s), "int");
                 } else if name == "length" {
@@ -1465,6 +1467,13 @@ impl<'a> Tr<'a> {
         let a: Vec<String> = args.iter().map(|x| x.s.clone()).collect();
         let n = args.len();
         let is_type = r.chars().next().is_some_and(|c| c.is_uppercase()) && !r.contains('(') && !r.contains('.');
+        // obj.getClass() は type(obj)、クラス名の取得は __name__ へ(getter の `.class` 化を避ける)
+        if n == 0 && name == "getClass" {
+            return e(format!("type({r})"), "");
+        }
+        if n == 0 && (name == "getSimpleName" || name == "getName") && r.starts_with("type(") {
+            return e(format!("{r}.__name__"), "String");
+        }
         // ---- 静的メソッド ----
         if is_type || r.starts_with("System.") {
             if let Some(x) = self.static_call(&r, name, &args) {
@@ -2169,6 +2178,17 @@ print(s)
         let p = tb("Object o = new Object() { int n = 1; public int inc(int a) { return a + n; } public int dbl(int a) { return a * 2; } }; int r = o.dbl(4);");
         assert!(p.contains("def inc(self, a):") && p.contains("def dbl(self, a):"), "{p}");
         assert!(!p.contains("最初の1つだけ"), "{p}");
+    }
+    #[test]
+    fn class_literal() {
+        let p = tb("Object o = SpringApplication.run(PetClinicApplication.class, args);");
+        assert!(!p.contains(".class"), "{p}");
+        assert!(p.contains("run(PetClinicApplication"), "{p}");
+    }
+    #[test]
+    fn get_class_name() {
+        let p = tb("String t = e.getClass().getSimpleName();");
+        assert!(p.contains("type(e).__name__"), "{p}");
     }
     #[test]
     fn if_for_return() {
