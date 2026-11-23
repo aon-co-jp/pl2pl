@@ -449,3 +449,11 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
 - **実装**: 生成コードの実行時部品 `java_rt.py` の `InMemoryRepository._derived` を拡張しました。`_or_`、`Containing`/`NotContaining`、`Like`/`NotLike`(`%`・`_`)、`StartingWith`/`EndingWith`、`GreaterThan`/`LessThan`(と `Equal` 付き)、`Between`、`In`/`NotIn`、`IsNull`/`IsNotNull`、`Not`、`True`/`False`、`IgnoreCase`、`OrderBy…Asc/Desc` に対応します。
 - **確認**: 単体テスト37件成功(`derived_queries_in_memory_repo`、実際に Python でメモリ上のリポジトリに問い合わせ、並びと件数を検証)。
 - **まだ**: メモリ上の足場であり、実 DB(SQL 生成)ではありません。`Top`/`First` の件数制限、`Distinct`、入れ子のプロパティ(`AddressCity`)、MapStruct マッパーの生成は未対応です。
+
+## 2026-11-23 追記: PetClinic の生成アプリが起動(import)するようになった(日本語)
+- 生成した FastAPI アプリ(`main.py`)を実際に `import` して起動を試したところ、実行時の不具合が2つ見つかったので直しました。
+  - `LoggerFactory.getLogger(...)` が未定義だったため、実行時部品 `java_rt.py` に SLF4J 相当の `LoggerFactory`(`info/warn/error/debug/trace`、`{}` の置換つき)を追加。
+  - `private static final Logger logger = LoggerFactory.getLogger(X.class)` のように、**自分のクラス名を使う static の初期値**がクラス本体の中で `NameError` になっていたため、クラス定義の後ろで `X.logger = ...` と代入する形にしました。
+- 結果: PetClinic の変換結果が `import ok`(ルート41本、うち37本が API)になりました。
+- **実際に呼ぶと500のまま**です。例: `GET /pettypes` は `PetTypeRestControllerV1 object has no attribute clinicService`。コンストラクター注入(`ClinicService` やマッパー)の配線が、この形(Lombok や明示コンストラクター)ではまだ生成されていません。リポジトリ・マッパーのインターフェースも TODO のままです。
+- 未了: コンストラクター注入の自動配線、MapStruct マッパーの生成、実 DB。
