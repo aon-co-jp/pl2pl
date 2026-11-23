@@ -413,3 +413,8 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
   - **`e.getClass().getSimpleName()`** が getter の規則で `e.class.simpleName` になっていたので、`type(e).__name__` にします(`getName` も同様)。
 - 結果: 生成された Python 7ファイルすべてが構文エラー0になりました。単体テスト36件成功(`class_literal`、`get_class_name`)。`tests/check-py2.sh` で構文確認、`tests/check-py.sh` で TODO の数も見られます。
 - **まだ**: 生成物の実行確認(FastAPI を起動して呼ぶ)は未実施です。`services.py` に TODO が108件残っています(JDBC・MapStruct・`ResponseEntity` などの本体)。
+
+## 2026-11-23 追記: PetClinic の TODO の内訳(日本語)
+- `tests/todo-top.sh` で生成 Python の TODO を種類ごとに数えました。残りの TODO の大半は、**インターフェースのメソッドの実装**です。`XxxMapper`(MapStruct が実行時に作るもの)と `XxxRepository`(Spring Data / JPA が実行時に作るもの)で、Java のソースには本体がありません。ほかは導出クエリ(`findByLastName` など)と未対応の式が数件です。
+- これは「黙って落とさず、TODO を `NotImplementedError` で残す」という既存の方針どおりの出力です。自動で埋めるには、Spring Data のメソッド名からの SQL 生成(導出クエリ)と、MapStruct のフィールド対応からの変換関数の生成が必要で、設計の判断を伴うため、次の課題にしました。
+- 未了: 導出クエリの SQL 生成、MapStruct マッパーの生成、生成した FastAPI の起動確認。
