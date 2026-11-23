@@ -367,3 +367,10 @@ English: Techniques for running AI stably and fast on machines with no or little
 - **対応**: `openapi.yml`(`openapi.yaml`・`swagger.yml`・`swagger.yaml` も)の `paths:` から (operationId・動詞・経路) を読み、`implements XxxApi` のコントローラーでメソッド名が operationId と一致するものをルートにします。引数は、経路の `{名前}` に当たれば Path、単純な型なら Query、それ以外は Body としました。
 - **結果**: ルートが **1本 → 37本**(openapi.yml の operationId 37件と一致)になりました。単体テスト34件成功(`openapi_first_routes`)。`tests/run-pc.sh <プロジェクトのパス>` で実プロジェクトを変換できます。
 - **まだ**: 本体(`ResponseEntity<...Dto>` を返す部分や MapStruct のマッパー)は変換していません。サーバー URL の接頭辞(`/api` など)、生成した FastAPI/Rust の実行確認、`/v2` 系のページング型は未対応です。
+
+## 2026-11-23 追記: PetClinic の生成 Python を構文エラー0に(日本語)
+- 実プロジェクト(Spring PetClinic REST)の変換結果を `python -m py_compile` にかけたところ、2種類の構文エラーが出たため直しました。
+  - **クラスリテラル** `Foo.class`(82か所)が Python に無い `.class` のまま出ていたので、`Foo` に変換します。
+  - **`e.getClass().getSimpleName()`** が getter の規則で `e.class.simpleName` になっていたので、`type(e).__name__` にします(`getName` も同様)。
+- 結果: 生成された Python 7ファイルすべてが構文エラー0になりました。単体テスト36件成功(`class_literal`、`get_class_name`)。`tests/check-py2.sh` で構文確認、`tests/check-py.sh` で TODO の数も見られます。
+- **まだ**: 生成物の実行確認(FastAPI を起動して呼ぶ)は未実施です。`services.py` に TODO が108件残っています(JDBC・MapStruct・`ResponseEntity` などの本体)。
