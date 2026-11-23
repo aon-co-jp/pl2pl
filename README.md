@@ -432,3 +432,8 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
 - 結果: PetClinic の変換結果が `import ok`(ルート41本、うち37本が API)になりました。
 - **実際に呼ぶと500のまま**です。例: `GET /pettypes` は `PetTypeRestControllerV1 object has no attribute clinicService`。コンストラクター注入(`ClinicService` やマッパー)の配線が、この形(Lombok や明示コンストラクター)ではまだ生成されていません。リポジトリ・マッパーのインターフェースも TODO のままです。
 - 未了: コンストラクター注入の自動配線、MapStruct マッパーの生成、実 DB。
+
+## 2026-11-23 追記: `this.フィールド` の名前を揃えた(PetClinic の呼び出しが先へ進む・日本語)
+- 生成した PetClinic アプリを呼ぶと `object has no attribute clinicService` で落ちていた原因は、本体の `this.clinicService` が **camelCase のまま** `self.clinicService` と出る一方、フィールドの宣言は `self.clinic_service`(snake_case)だったことでした。`this.xxx` は snake_case にそろえるよう直しました(単体テスト38件成功、`this_field_is_snake_case`)。
+- 結果: `GET /pettypes`・`/owners`・`/vets` の処理が **コントローラー → サービス → リポジトリ** まで進むようになりました。いまはリポジトリのインターフェース(`PetTypeRepository.findAll` など)の `NotImplementedError`(TODO)で止まります。
+- **まだ**: リポジトリのインターフェースに実装クラス(Jdbc・JPA・Spring Data JPA の3種類がある)が複数ある場合の選び方と、メモリ上の足場(`InMemoryRepository`)への割り当て、MapStruct マッパーの生成は未対応です。
