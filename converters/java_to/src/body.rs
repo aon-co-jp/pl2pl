@@ -1441,7 +1441,9 @@ impl<'a> Tr<'a> {
                 } else {
                     // フィールド参照: 型名.CONSTANT や obj.field
                     let n = if x.s.chars().next().is_some_and(|c| c.is_uppercase()) && x.s.chars().all(|c| c.is_alphanumeric() || c == '_') { name.clone() } else { name.clone() };
-                    x = e(format!("{}.{}", x.s, if n.chars().all(|c| c.is_uppercase() || c == '_' || c.is_ascii_digit()) { n } else { n }), "");
+                    // `this.fooBar` は自分のフィールドなので、生成側の宣言(snake_case)に合わせる
+                    let n = if x.s == "self" && !n.chars().all(|c| c.is_uppercase() || c == '_' || c.is_ascii_digit()) { snake(&n) } else { n };
+                    x = e(format!("{}.{}", x.s, n), "");
                 }
             } else if self.at("[") {
                 let inner = self.balanced("[", "]");
@@ -2215,6 +2217,11 @@ print(s)
             let want = "['alice', 'carol']\n['bob', 'carol']\n['bob', 'carol']\n['alice', 'bob']\n['carol', 'bob', 'alice']\n2\n";
             assert_eq!(s, want);
         }
+    }
+    #[test]
+    fn this_field_is_snake_case() {
+        let p = tb("Object r = this.clinicService.findAll();");
+        assert!(p.contains("self.clinic_service.find_all()"), "{p}");
     }
     #[test]
     fn if_for_return() {
