@@ -58,6 +58,10 @@ pub fn is_dto(c: &Class) -> bool {
     !c.fields.is_empty() && c.methods.iter().all(|m| is_accessor(m, c)) && c.extends.iter().all(|e| !e.ends_with("HttpServlet"))
 }
 
+fn class_map_has(classes: &[&Class], name: &str) -> bool {
+    classes.iter().any(|c| c.name == name)
+}
+
 fn is_repo_iface(c: &Class) -> bool {
     c.kind == "interface" && c.extends.iter().any(|e| ["JpaRepository", "CrudRepository", "PagingAndSortingRepository", "ListCrudRepository", "MongoRepository", "Repository", "PanacheRepository", "ReactiveCrudRepository"].contains(&e.split('<').next().unwrap_or("")))
 }
@@ -160,12 +164,29 @@ pub struct Out {
 
 pub fn generate(p: &Project, target: &str, name: &str) -> Out {
     let classes = all_classes(p);
-    let dto_names: HashSet<String> = classes.iter().filter(|c| is_dto(c)).map(|c| c.name.clone()).collect();
+    let mut dto_names: HashSet<String> = classes.iter().filter(|c| is_dto(c)).map(|c| c.name.clone()).collect();
+    // データクラスの親(フィールドを持つ基底クラス: `id` など)もモデルに含める。親のメソッド(`isNew` など)はモデルには移らない
+    loop {
+        let parents: Vec<String> = classes
+            .iter()
+            .filter(|c| dto_names.contains(&c.name))
+            .flat_map(|c| c.extends.iter().map(|b| b.split('<').next().unwrap_or("").to_string()))
+            .filter(|b| !dto_names.contains(b) && classes.iter().any(|x| &x.name == b && x.kind == "class" && x.fields.iter().any(|f| !f.is_static)))
+            .collect();
+        if parents.is_empty() {
+            break;
+        }
+        dto_names.extend(parents);
+    }
     let enum_names: HashSet<String> = classes.iter().filter(|c| c.kind == "enum").map(|c| c.name.clone()).collect();
     let mut svc_methods: HashSet<String> = HashSet::new();
     for c in &classes {
         if !dto_names.contains(&c.name) && c.kind != "enum" {
             for m in &c.methods {
+                // 単なる getX/setX/isX(フィールドの読み書きだけ)は属性アクセスに直せるので、業務メソッド扱いにしない
+                if is_accessor(m, c) && !m.is_ctor {
+                    continue;
+                }
                 svc_methods.insert(m.name.clone());
             }
         }
@@ -178,7 +199,7 @@ pub fn generate(p: &Project, target: &str, name: &str) -> Out {
     // ---- models.py ----
     let mut models = Mod { lines: vec![], uses: BTreeSet::new() };
     models.uses.insert("datetime");
-    for c in &classes {
+    for c in topo(&classes) {
         if c.kind == "enum" {
             models.lines.push(format!("class {}(str, Enum):", c.name));
             if c.enum_consts.is_empty() {
@@ -189,7 +210,9 @@ pub fn generate(p: &Project, target: &str, name: &str) -> Out {
             }
             models.lines.push(String::new());
         } else if dto_names.contains(&c.name) {
-            models.lines.push(format!("class {}(BaseModel):", c.name));
+            // 親クラスもデータクラスなら継承する(`id` などの親のフィールドを引き継ぐ)
+            let parent = c.extends.iter().map(|b| b.split('<').next().unwrap_or("").to_string()).find(|b| dto_names.contains(b) && class_map_has(&classes, b) && b != &c.name);
+            models.lines.push(format!("class {}({}):", c.name, parent.as_deref().unwrap_or("BaseModel")));
             models.lines.push("    model_config = ConfigDict(populate_by_name=True)".into());
             let mut any = false;
             for f in c.fields.iter().filter(|f| !f.is_static) {
@@ -329,7 +352,12 @@ fn gen_class(c: &Class, class_map: &HashMap<&str, &Class>, impls: &HashMap<Strin
         .filter(|b| class_map.contains_key(b.as_str()) && !dtos.contains(b))
         .collect();
     let repo = is_repo_iface(c);
+    let mapper = c.kind == "interface" && c.has_ann(&["Mapper"]);
     let mut base_list = bases.clone();
+    if mapper {
+        base_list.insert(0, "MapperBase".into());
+        m.uses.insert("rt");
+    }
     if repo {
         base_list.insert(0, "InMemoryRepository".into());
         m.uses.insert("rt");
@@ -441,14 +469,32 @@ fn gen_class(c: &Class, class_map: &HashMap<&str, &Class>, impls: &HashMap<Strin
         if mth.is_static {
             body_lines.push("    @classmethod".into());
         }
-        body_lines.push(format!("    def {pyname}({first}{}):", if params.is_empty() { String::new() } else { format!(", {}", params.join(", ")) }));
+        // リポジトリの本体なしメソッドは、オーバーロード(`findAll()` と `findAll(Pageable)`)を1つにまとめるため引数を省略可にする
+        let sig_params: Vec<String> = if repo && mth.body.is_none() { params.iter().map(|p| format!("{p}=None")).collect() } else { params.clone() };
+        body_lines.push(format!("    def {pyname}({first}{}):", if sig_params.is_empty() { String::new() } else { format!(", {}", sig_params.join(", ")) }));
         match &mth.body {
             Some(b) => {
                 let lines = translate_body(b, &mut ctx, 2);
                 body_lines.extend(lines);
             }
             None => {
-                if repo {
+                if mapper && !mth.params.is_empty() {
+                    // MapStruct: 戻り値の型へ、同名の属性を写して作る(入れ子・コレクションは再帰)
+                    let ret = mth.ret.trim();
+                    let inner = ret.find('<').map(|i| ret[i + 1..ret.len() - 1].trim().to_string());
+                    let is_many = ["List", "Collection", "Iterable", "Set"].iter().any(|k| ret.starts_with(k));
+                    let target = if is_many { inner.unwrap_or_default() } else { ret.to_string() };
+                    let tname = target.rsplit('.').next().unwrap_or("").to_string();
+                    let known = class_map.contains_key(tname.as_str());
+                    let t = if known { tname.clone() } else { "None".into() };
+                    let p0 = &params[0];
+                    if is_many {
+                        body_lines.push(format!("        return [self._to({t}, v) for v in ({p0} or [])]"));
+                    } else {
+                        body_lines.push(format!("        return self._to({t}, {p0})"));
+                    }
+                    m.uses.insert("rt");
+                } else if repo {
                     let many = ["List", "Collection", "Iterable", "Set", "Stream", "Page"].iter().any(|k| mth.ret.starts_with(k));
                     body_lines.push(format!("        return self._derived(\"{pyname}\", [{}], {})", params.join(", "), if many { "True" } else { "False" }));
                 } else if c.kind == "interface" {
@@ -496,6 +542,16 @@ fn wire_value(ty: &str, class_map: &HashMap<&str, &Class>, impls: &HashMap<Strin
             if let Some(v) = impls.get(base) {
                 if v.len() == 1 {
                     return format!("{}()", v[0]);
+                }
+                // 実装が複数(Jdbc/JPA/Spring Data など)なら、メモリ上で動く Spring Data 系を優先し、
+                // 無ければデータベース接続の要らなそうなもの(Jdbc/Jpa を名前に含まない)、最後に先頭
+                let pick = v
+                    .iter()
+                    .find(|n| class_map.get(**n).is_some_and(|x| is_repo_iface(x)))
+                    .or_else(|| v.iter().find(|n| !n.contains("Jdbc") && !n.contains("Jpa")))
+                    .or_else(|| v.first());
+                if let Some(n) = pick {
+                    return format!("{n}()");
                 }
             }
             return format!("{base}()");

@@ -1067,6 +1067,11 @@ impl<'a> Tr<'a> {
                 format!("StringBuilder({})", if a.is_empty() || args[0].ty == "int" { String::new() } else { a[0].clone() })
             }
             "Object" => "object()".to_string(),
+            "ResponseEntity" => {
+                // new ResponseEntity<>(HttpStatus.X) / (body, HttpStatus.X) / (body, headers, HttpStatus.X)
+                self.c.uses.insert("rt");
+                format!("ResponseEntity({})", a.join(", "))
+            }
             "AtomicInteger" | "AtomicLong" => {
                 self.c.uses.insert("rt");
                 format!("AtomicNumber({})", a.first().cloned().unwrap_or_else(|| "0".into()))
@@ -2186,6 +2191,11 @@ print(s)
         let p = tb("Object o = SpringApplication.run(PetClinicApplication.class, args);");
         assert!(!p.contains(".class"), "{p}");
         assert!(p.contains("run(PetClinicApplication"), "{p}");
+    }
+    #[test]
+    fn new_response_entity() {
+        let p = tb("return new ResponseEntity<>(owners, HttpStatus.OK);");
+        assert!(p.contains("ResponseEntity(owners, HttpStatus.OK)"), "{p}");
     }
     #[test]
     fn get_class_name() {

@@ -13,10 +13,14 @@ __all__ = [
     "or_else_get",
     "or_else_throw",
     "ResponseBuilder",
+    "ResponseEntity",
     "HttpStatus",
     "Status",
     "to_response",
     "InMemoryRepository",
+    "MapperBase",
+    "HttpHeaders",
+    "UriComponentsBuilder",
 ]
 
 
@@ -186,6 +190,20 @@ class ResponseBuilder:
         return self
 
 
+class ResponseEntity(ResponseBuilder):
+    """`new ResponseEntity<>(status)` / `(body, status)` / `(body, headers, status)`。"""
+
+    def __init__(self, *args: Any) -> None:
+        super().__init__("ok")
+        ints = [a for a in args if isinstance(a, int) and not isinstance(a, bool)]
+        self.status = ints[-1] if ints else 200
+        rest = [a for a in args if not (isinstance(a, int) and not isinstance(a, bool))]
+        if rest:
+            self.payload = rest[0]
+        if len(rest) > 1 and isinstance(rest[1], dict):
+            self.headers = {str(k): str(v) for k, v in rest[1].items()}
+
+
 def to_response(x: Any) -> Any:
     """ResponseBuilder を実際の応答へ。それ以外はそのまま FastAPI に返させる。"""
     if isinstance(x, ResponseBuilder):
@@ -196,6 +214,77 @@ def to_response(x: Any) -> Any:
             return Response(status_code=x.status, headers=x.headers)
         return JSONResponse(status_code=x.status, content=jsonable_encoder(x.payload), headers=x.headers)
     return x
+
+
+class HttpHeaders(dict):
+    """Spring の HttpHeaders の置き換え。`headers.location = uri` のような代入もヘッダーになる。"""
+
+    def __setattr__(self, k: str, v: Any) -> None:
+        self[str(k)] = str(v)
+
+    def set(self, k: Any, v: Any) -> None:
+        self[str(k)] = str(v)
+
+    add = set
+
+
+class UriComponentsBuilder:
+    """`UriComponentsBuilder.newInstance().path("/x/{id}").buildAndExpand(1).toUri()` 程度の置き換え。"""
+
+    def __init__(self) -> None:
+        self._path = ""
+        self._vals: tuple[Any, ...] = ()
+
+    @classmethod
+    def new_instance(cls) -> "UriComponentsBuilder":
+        return cls()
+
+    @classmethod
+    def from_path(cls, p: str) -> "UriComponentsBuilder":
+        return cls().path(p)
+
+    def path(self, p: str) -> "UriComponentsBuilder":
+        self._path += str(p)
+        return self
+
+    def build_and_expand(self, *vals: Any) -> "UriComponentsBuilder":
+        self._vals = vals
+        return self
+
+    expand = build_and_expand
+
+    def build(self) -> "UriComponentsBuilder":
+        return self
+
+    def to_uri(self) -> str:
+        out = self._path
+        for v in self._vals:
+            out = re.sub(r"\{[^}]*\}", str(v), out, count=1)
+        return out
+
+
+class MapperBase:
+    """MapStruct の `@Mapper` インターフェースの置き換え。同名の属性を写して戻り値の型を作る(足場)。"""
+
+    def _to(self, cls: Any, src: Any) -> Any:
+        if src is None:
+            return None
+        if cls is None or isinstance(src, cls):
+            return src
+        fields = getattr(cls, "model_fields", None)
+        names = list(fields) if fields else []
+        kw: dict[str, Any] = {}
+        for n in names:
+            v = src.get(n) if isinstance(src, dict) else getattr(src, n, None)
+            if v is None and "_" not in n:
+                snake = re.sub(r"(?<!^)(?=[A-Z])", "_", n).lower()
+                v = src.get(snake) if isinstance(src, dict) else getattr(src, snake, None)
+            if v is not None:
+                kw[n] = v
+        try:
+            return cls(**kw)
+        except Exception:
+            return cls.model_construct(**kw) if hasattr(cls, "model_construct") else cls()
 
 
 class InMemoryRepository:
@@ -250,6 +339,10 @@ class InMemoryRepository:
 
     # --- 導出クエリ: find_by_user_name / exists_by_email / count_by_status / delete_by_x / find_all_by_x ---
     def _derived(self, name: str, args: list[Any], many: bool = False) -> Any:
+        # find_all / save / count など、基底クラスにある標準操作は、サブクラスの宣言から呼ばれても基底の実装へ回す
+        std = getattr(InMemoryRepository, name, None)
+        if callable(std) and not name.startswith("_"):
+            return std(self, *[a for a in args if a is not None])
         m = re.match(r"^(find_all_by|find_by|get_by|read_by|query_by|exists_by|count_by|delete_by|remove_by)_(.+)$", name)
         if not m:
             raise NotImplementedError(f"TODO(Java_to): 導出クエリ {name} を実装する")
