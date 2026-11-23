@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 __all__ = [
+    "LoggerFactory",
     "StringBuilder",
     "AtomicNumber",
     "jformat",
@@ -96,6 +97,44 @@ def or_else_throw(v: Any, exc: Any = None) -> Any:
     if callable(exc) and not isinstance(exc, BaseException):
         exc = exc()
     raise exc
+
+
+class _JLogger:
+    """SLF4J の Logger 相当(info/warn/error/debug/trace、`{}` の置換つき)。"""
+
+    def __init__(self, name: str) -> None:
+        import logging
+
+        self._l = logging.getLogger(name)
+
+    @staticmethod
+    def _fmt(msg: Any, args: tuple) -> str:
+        m = str(msg)
+        for a in args:
+            m = m.replace("{}", str(a), 1)
+        return m
+
+    def info(self, msg: Any, *a: Any) -> None:
+        self._l.info(self._fmt(msg, a))
+
+    def warn(self, msg: Any, *a: Any) -> None:
+        self._l.warning(self._fmt(msg, a))
+
+    def error(self, msg: Any, *a: Any) -> None:
+        self._l.error(self._fmt(msg, a))
+
+    def debug(self, msg: Any, *a: Any) -> None:
+        self._l.debug(self._fmt(msg, a))
+
+    trace = debug
+
+
+class LoggerFactory:
+    @staticmethod
+    def get_logger(c: Any = "app") -> "_JLogger":
+        return _JLogger(getattr(c, "__name__", str(c)))
+
+    getLogger = get_logger
 
 
 class HttpStatus:

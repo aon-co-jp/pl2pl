@@ -359,13 +359,28 @@ fn gen_class(c: &Class, class_map: &HashMap<&str, &Class>, impls: &HashMap<Strin
         }
         ctx
     };
+    // 自分のクラス名を使う static の初期値(`getLogger(X.class)` など)は、クラス定義の後で代入する
+    let mut post_lines: Vec<String> = vec![];
+    let mentions_self = |v: &str| {
+        let cn = c.name.as_str();
+        v.match_indices(cn).any(|(i, _)| {
+            let before = v[..i].chars().next_back().is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+            let after = v[i + cn.len()..].chars().next().is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+            before && after
+        })
+    };
     for f in c.fields.iter().filter(|f| f.is_static) {
         let mut ctx = mk_ctx(true);
         let v = if f.init.is_empty() { crate::body::default_value(&f.ty) } else { translate_expr(&f.init, &mut ctx) };
         for u in ctx.uses.iter() {
             m.uses.insert(u);
         }
-        body_lines.push(format!("    {} = {}", f.name, v));
+        if mentions_self(&v) {
+            body_lines.push(format!("    {} = None", f.name));
+            post_lines.push(format!("{}.{} = {}", c.name, f.name, v));
+        } else {
+            body_lines.push(format!("    {} = {}", f.name, v));
+        }
     }
     // __init__
     let ctor = c.methods.iter().find(|x| x.is_ctor && x.body.as_ref().is_some_and(|b| has_logic(b, &inst_fields)));
@@ -455,6 +470,7 @@ fn gen_class(c: &Class, class_map: &HashMap<&str, &Class>, impls: &HashMap<Strin
         body_lines.push(String::new());
     }
     m.lines.extend(body_lines);
+    m.lines.extend(post_lines);
     m.lines.push(String::new());
 }
 
