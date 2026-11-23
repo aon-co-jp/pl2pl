@@ -418,3 +418,9 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
 - `tests/todo-top.sh` で生成 Python の TODO を種類ごとに数えました。残りの TODO の大半は、**インターフェースのメソッドの実装**です。`XxxMapper`(MapStruct が実行時に作るもの)と `XxxRepository`(Spring Data / JPA が実行時に作るもの)で、Java のソースには本体がありません。ほかは導出クエリ(`findByLastName` など)と未対応の式が数件です。
 - これは「黙って落とさず、TODO を `NotImplementedError` で残す」という既存の方針どおりの出力です。自動で埋めるには、Spring Data のメソッド名からの SQL 生成(導出クエリ)と、MapStruct のフィールド対応からの変換関数の生成が必要で、設計の判断を伴うため、次の課題にしました。
 - 未了: 導出クエリの SQL 生成、MapStruct マッパーの生成、生成した FastAPI の起動確認。
+
+## 2026-11-23 追記: 導出クエリの対応を拡大(日本語)
+- **調査(英語・日本語のWeb検索とGitHub)**: Spring Data の導出クエリの規則は公式の「Repository query keywords」が正本です(`find…By` の `By` から条件が始まる、`And`/`Or`、`Like`・`Containing`・`StartingWith`・`EndingWith`、`GreaterThan`・`LessThan`・`Between`・`In`・`IsNull`、`OrderBy…Asc/Desc` など)。メソッド名から条件を作る実装は Spring Data Commons の `PartTree` ですが、Python へ移せる既存ライブラリは見つかりませんでした(日本語の解説も公式の英語文書が中心)。
+- **実装**: 生成コードの実行時部品 `java_rt.py` の `InMemoryRepository._derived` を拡張しました。`_or_`、`Containing`/`NotContaining`、`Like`/`NotLike`(`%`・`_`)、`StartingWith`/`EndingWith`、`GreaterThan`/`LessThan`(と `Equal` 付き)、`Between`、`In`/`NotIn`、`IsNull`/`IsNotNull`、`Not`、`True`/`False`、`IgnoreCase`、`OrderBy…Asc/Desc` に対応します。
+- **確認**: 単体テスト37件成功(`derived_queries_in_memory_repo`、実際に Python でメモリ上のリポジトリに問い合わせ、並びと件数を検証)。
+- **まだ**: メモリ上の足場であり、実 DB(SQL 生成)ではありません。`Top`/`First` の件数制限、`Distinct`、入れ子のプロパティ(`AddressCity`)、MapStruct マッパーの生成は未対応です。
