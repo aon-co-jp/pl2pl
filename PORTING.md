@@ -425,3 +425,9 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
 ## 2026-11-23 追記: List 操作の生成 Rust をコンパイル確認(日本語)
 - 前回の List 操作(宣言・`add`・`get`・拡張 for)を、Spring サンプルに `/squares/{n}` を足して実際に変換し、WSL で `tests/run-rust.sh` を実行しました。生成された Rust(`Vec<i32>`、`push`、`for x in xs.clone()`、`xs.len()`)は、spring・jaxrs・servlet・spark の4つとも `cargo check` に通りました。
 - 実行して値を確かめるところまでは未了です。未了: Map や Stream を含む Rust 本体、Spring PetClinic など実プロジェクトでの通し確認。
+
+## 2026-11-23 追記: OpenAPI 先行のプロジェクトに対応(Spring PetClinic REST で確認・日本語)
+- **きっかけ(実プロジェクトでの通し確認)**: GitHub の `spring-petclinic/spring-petclinic-rest`(Java 109ファイル)を変換にかけたところ、ルートが **1本しか見つかりませんでした**。このプロジェクトは `openapi.yml` から生成した `XxxApi` インターフェースを `implements` する方式で、コントローラーに `@GetMapping` などが無いためです。
+- **対応**: `openapi.yml`(`openapi.yaml`・`swagger.yml`・`swagger.yaml` も)の `paths:` から (operationId・動詞・経路) を読み、`implements XxxApi` のコントローラーでメソッド名が operationId と一致するものをルートにします。引数は、経路の `{名前}` に当たれば Path、単純な型なら Query、それ以外は Body としました。
+- **結果**: ルートが **1本 → 37本**(openapi.yml の operationId 37件と一致)になりました。単体テスト34件成功(`openapi_first_routes`)。`tests/run-pc.sh <プロジェクトのパス>` で実プロジェクトを変換できます。
+- **まだ**: 本体(`ResponseEntity<...Dto>` を返す部分や MapStruct のマッパー)は変換していません。サーバー URL の接頭辞(`/api` など)、生成した FastAPI/Rust の実行確認、`/v2` 系のページング型は未対応です。
