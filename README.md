@@ -437,3 +437,55 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
 - 生成した PetClinic アプリを呼ぶと `object has no attribute clinicService` で落ちていた原因は、本体の `this.clinicService` が **camelCase のまま** `self.clinicService` と出る一方、フィールドの宣言は `self.clinic_service`(snake_case)だったことでした。`this.xxx` は snake_case にそろえるよう直しました(単体テスト38件成功、`this_field_is_snake_case`)。
 - 結果: `GET /pettypes`・`/owners`・`/vets` の処理が **コントローラー → サービス → リポジトリ** まで進むようになりました。いまはリポジトリのインターフェース(`PetTypeRepository.findAll` など)の `NotImplementedError`(TODO)で止まります。
 - **まだ**: リポジトリのインターフェースに実装クラス(Jdbc・JPA・Spring Data JPA の3種類がある)が複数ある場合の選び方と、メモリ上の足場(`InMemoryRepository`)への割り当て、MapStruct マッパーの生成は未対応です。
+
+## 2026-11-25 現況・未了 / Status and open items
+
+*日本語・English が基本、ほかの言語は AI 翻訳(ネイティブ確認前)。 / Japanese and English are the base; other languages are AI-translated, not native-checked.*
+
+### 日本語
+
+現状: 古いプログラム(COBOL・C・C++・Fortran・Java など)を、選んだ言語とフレームワークへ書きかえる道具。最近は Java_to の PetClinic 対応(ResponseEntity・Mapper・親データクラス)を取り込み、多言語の文書を同期した。残り: Mac・iPhone の実機での確認(ここには実機がありません)。翻訳: AI 翻訳(ja/en 以外)、ネイティブの確認はまだです。
+
+### English
+
+Status: a tool that rewrites old programs (COBOL, C, C++, Fortran, Java and more) into the language and framework you choose. Recently it took in Java_to's PetClinic support (ResponseEntity, Mapper, parent data classes) and its translated docs were synced. Open: checks on a real Mac and iPhone (no such devices here). Translations: AI-translated (other than ja/en), not yet checked by native speakers.
+
+### 简体中文
+
+现状:把旧程序(COBOL、C、C++、Fortran、Java 等)改写成你所选语言和框架的工具。最近并入了 Java_to 对 PetClinic 的支持(ResponseEntity、Mapper、父数据类),并同步了多语言文档。待办:在真实的 Mac 和 iPhone 上验证(这里没有这些设备)。翻译:由 AI 翻译,尚未经母语者确认。
+
+### 繁體中文
+
+現況:把舊程式(COBOL、C、C++、Fortran、Java 等)改寫成你所選語言和框架的工具。最近併入了 Java_to 對 PetClinic 的支援(ResponseEntity、Mapper、父資料類別),並同步了多語言文件。待辦:在實體 Mac 和 iPhone 上驗證(這裡沒有這些裝置)。翻譯:由 AI 翻譯,尚未經母語人士確認。
+
+### 한국어
+
+현황: 오래된 프로그램(COBOL, C, C++, Fortran, Java 등)을 선택한 언어와 프레임워크로 다시 써 주는 도구입니다. 최근 Java_to의 PetClinic 지원(ResponseEntity, Mapper, 상위 데이터 클래스)을 가져오고 다국어 문서를 동기화했습니다. 남은 일: 실제 Mac과 iPhone에서의 확인(여기에는 해당 기기가 없습니다). 번역: AI 번역이며 원어민의 확인은 아직 받지 않았습니다.
+
+### Deutsch
+
+Stand: ein Werkzeug, das alte Programme (COBOL, C, C++, Fortran, Java u. a.) in die gewählte Sprache und das gewählte Framework umschreibt. Zuletzt wurde die PetClinic-Unterstützung von Java_to (ResponseEntity, Mapper, Eltern-Datenklassen) übernommen und die mehrsprachige Dokumentation abgeglichen. Offen: Prüfung auf einem echten Mac und iPhone (solche Geräte haben wir hier nicht). Übersetzungen: KI-übersetzt, noch nicht von Muttersprachlern geprüft.
+
+### Français
+
+État : un outil qui réécrit de vieux programmes (COBOL, C, C++, Fortran, Java, etc.) dans le langage et le framework de votre choix. Récemment, il a intégré la prise en charge de PetClinic de Java_to (ResponseEntity, Mapper, classes de données parentes) et sa documentation multilingue a été synchronisée. Reste à faire : vérifier sur un vrai Mac et un vrai iPhone (nous n'avons pas ces appareils ici). Traductions : faites par IA, pas encore relues par des locuteurs natifs.
+
+### Español
+
+Estado: una herramienta que reescribe programas antiguos (COBOL, C, C++, Fortran, Java, etc.) en el lenguaje y el framework que elijas. Hace poco incorporó el soporte de PetClinic de Java_to (ResponseEntity, Mapper, clases de datos padre) y se sincronizó la documentación multilingüe. Pendiente: comprobar en un Mac y un iPhone reales (aquí no tenemos esos dispositivos). Traducciones: hechas por IA, aún sin revisión de hablantes nativos.
+
+### Português
+
+Situação: uma ferramenta que reescreve programas antigos (COBOL, C, C++, Fortran, Java etc.) na linguagem e no framework que você escolher. Recentemente incorporou o suporte a PetClinic do Java_to (ResponseEntity, Mapper, classes de dados pai) e a documentação multilíngue foi sincronizada. Pendente: verificar em um Mac e um iPhone de verdade (não temos esses aparelhos aqui). Traduções: feitas por IA, ainda não revisadas por falantes nativos.
+
+### Русский
+
+Состояние: инструмент, который переписывает старые программы (COBOL, C, C++, Fortran, Java и др.) на выбранный язык и фреймворк. Недавно в него перенесена поддержка PetClinic из Java_to (ResponseEntity, Mapper, родительские классы данных), а многоязычная документация синхронизирована. Осталось: проверка на настоящих Mac и iPhone (таких устройств у нас здесь нет). Переводы: выполнены ИИ, носители языка их пока не проверяли.
+
+### العربية
+
+الوضع: أداة تعيد كتابة البرامج القديمة (COBOL وC وC++ وFortran وJava وغيرها) بلغة الإطار الذي تختاره. دمجت مؤخرًا دعم PetClinic من Java_to (ResponseEntity وMapper وفئات البيانات الأم) وتمت مزامنة الوثائق متعددة اللغات. المتبقي: التحقق على جهازَي Mac وiPhone حقيقيين (لا تتوفر لدينا هذه الأجهزة هنا). الترجمات: أنجزها الذكاء الاصطناعي ولم يراجعها بعدُ متحدثون أصليون.
+
+### فارسی
+
+وضعیت: ابزاری که برنامه‌های قدیمی (COBOL، C، C++، Fortran، Java و غیره) را به زبان و چارچوب انتخابی شما بازنویسی می‌کند. اخیراً پشتیبانی PetClinic از Java_to (ResponseEntity، Mapper و کلاس‌های دادهٔ والد) را در خود گرفته و مستندات چندزبانه همگام شده است. باقی‌مانده: بررسی روی Mac و iPhone واقعی (این دستگاه‌ها را اینجا نداریم). ترجمه‌ها: با هوش مصنوعی انجام شده و هنوز گویشوران بومی آن‌ها را بررسی نکرده‌اند.

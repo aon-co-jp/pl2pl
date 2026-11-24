@@ -462,3 +462,13 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
 - 生成した PetClinic アプリを呼ぶと `object has no attribute clinicService` で落ちていた原因は、本体の `this.clinicService` が **camelCase のまま** `self.clinicService` と出る一方、フィールドの宣言は `self.clinic_service`(snake_case)だったことでした。`this.xxx` は snake_case にそろえるよう直しました(単体テスト38件成功、`this_field_is_snake_case`)。
 - 結果: `GET /pettypes`・`/owners`・`/vets` の処理が **コントローラー → サービス → リポジトリ** まで進むようになりました。いまはリポジトリのインターフェース(`PetTypeRepository.findAll` など)の `NotImplementedError`(TODO)で止まります。
 - **まだ**: リポジトリのインターフェースに実装クラス(Jdbc・JPA・Spring Data JPA の3種類がある)が複数ある場合の選び方と、メモリ上の足場(`InMemoryRepository`)への割り当て、MapStruct マッパーの生成は未対応です。
+
+## 2026-11-25 現況・未了 / Status and open items
+
+### 日本語
+
+現状: 古いプログラム(COBOL・C・C++・Fortran・Java など)を、選んだ言語とフレームワークへ書きかえる道具。最近は Java_to の PetClinic 対応(ResponseEntity・Mapper・親データクラス)を取り込み、多言語の文書を同期した。残り: Mac・iPhone の実機での確認(ここには実機がありません)。翻訳: AI 翻訳(ja/en 以外)、ネイティブの確認はまだです。
+
+### English
+
+Status: a tool that rewrites old programs (COBOL, C, C++, Fortran, Java and more) into the language and framework you choose. Recently it took in Java_to's PetClinic support (ResponseEntity, Mapper, parent data classes) and its translated docs were synced. Open: checks on a real Mac and iPhone (no such devices here). Translations: AI-translated (other than ja/en), not yet checked by native speakers.
