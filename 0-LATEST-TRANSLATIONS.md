@@ -5,16 +5,16 @@ Japanese and English are always the newest. Other languages are not translated e
 
 ## CLAUDE.md
 
-- 日本語 / ja: 2026-11-23 (latest)
-- English / en: 2026-11-22 (older than 2026-11-23)
-- 简体中文 / zh-Hans: 2026-11-19 (older than 2026-11-23)
-- 繁體中文 / zh-Hant: 2026-11-19 (older than 2026-11-23)
-- 한국어 / ko: 2026-11-19 (older than 2026-11-23)
-- Deutsch / de: 2026-11-19 (older than 2026-11-23)
-- Français / fr: 2026-11-19 (older than 2026-11-23)
-- Español / es: 2026-11-19 (older than 2026-11-23)
-- Português / pt: 2026-11-19 (older than 2026-11-23)
-- Русский / ru: 2026-11-19 (older than 2026-11-23)
+- 日本語 / ja: 2026-11-25 (latest)
+- English / en: 2026-11-25
+- 简体中文 / zh-Hans: 2026-11-19 (older than 2026-11-25)
+- 繁體中文 / zh-Hant: 2026-11-19 (older than 2026-11-25)
+- 한국어 / ko: 2026-11-19 (older than 2026-11-25)
+- Deutsch / de: 2026-11-19 (older than 2026-11-25)
+- Français / fr: 2026-11-19 (older than 2026-11-25)
+- Español / es: 2026-11-19 (older than 2026-11-25)
+- Português / pt: 2026-11-19 (older than 2026-11-25)
+- Русский / ru: 2026-11-19 (older than 2026-11-25)
 - العربية / ar: not yet / まだ
 - فارسی / fa: not yet / まだ
 
@@ -35,30 +35,30 @@ Japanese and English are always the newest. Other languages are not translated e
 
 ## PORTING.md
 
-- 日本語 / ja: 2026-11-23 (latest)
-- English / en: 2026-11-22 (older than 2026-11-23)
-- 简体中文 / zh-Hans: 2026-11-19 (older than 2026-11-23)
-- 繁體中文 / zh-Hant: 2026-11-19 (older than 2026-11-23)
-- 한국어 / ko: 2026-11-19 (older than 2026-11-23)
-- Deutsch / de: 2026-11-19 (older than 2026-11-23)
-- Français / fr: 2026-11-19 (older than 2026-11-23)
-- Español / es: 2026-11-19 (older than 2026-11-23)
-- Português / pt: 2026-11-19 (older than 2026-11-23)
-- Русский / ru: 2026-11-19 (older than 2026-11-23)
+- 日本語 / ja: 2026-11-25 (latest)
+- English / en: 2026-11-25
+- 简体中文 / zh-Hans: 2026-11-19 (older than 2026-11-25)
+- 繁體中文 / zh-Hant: 2026-11-19 (older than 2026-11-25)
+- 한국어 / ko: 2026-11-19 (older than 2026-11-25)
+- Deutsch / de: 2026-11-19 (older than 2026-11-25)
+- Français / fr: 2026-11-19 (older than 2026-11-25)
+- Español / es: 2026-11-19 (older than 2026-11-25)
+- Português / pt: 2026-11-19 (older than 2026-11-25)
+- Русский / ru: 2026-11-19 (older than 2026-11-25)
 - العربية / ar: not yet / まだ
 - فارسی / fa: not yet / まだ
 
 ## README.md
 
-- 日本語 / ja: 2026-11-23 (latest)
-- English / en: 2026-11-22 (older than 2026-11-23)
-- 简体中文 / zh-Hans: 2026-11-19 (older than 2026-11-23)
-- 繁體中文 / zh-Hant: 2026-11-19 (older than 2026-11-23)
-- 한국어 / ko: 2026-11-19 (older than 2026-11-23)
-- Deutsch / de: 2026-11-19 (older than 2026-11-23)
-- Français / fr: 2026-11-19 (older than 2026-11-23)
-- Español / es: 2026-11-19 (older than 2026-11-23)
-- Português / pt: 2026-11-19 (older than 2026-11-23)
-- Русский / ru: 2026-11-19 (older than 2026-11-23)
-- العربية / ar: not yet / まだ
-- فارسی / fa: not yet / まだ
+- 日本語 / ja: 2026-11-25 (latest)
+- English / en: 2026-11-25
+- 简体中文 / zh-Hans: 2026-11-25
+- 繁體中文 / zh-Hant: 2026-11-25
+- 한국어 / ko: 2026-11-25
+- Deutsch / de: 2026-11-25
+- Français / fr: 2026-11-25
+- Español / es: 2026-11-25
+- Português / pt: 2026-11-25
+- Русский / ru: 2026-11-25
+- العربية / ar: 2026-11-25
+- فارسی / fa: 2026-11-25
