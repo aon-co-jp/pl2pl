@@ -36,3 +36,11 @@
 - Sister repositories developed together: Reaxt, RPoRea, RPoem, RMojo, open-cosmo, RS-TypeScript, RS-JavaScript, RS-Node.js and pl2pl. When one changes, the others are checked the same day.
 - `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` and `webpage/info.html` explain the design principles of RPoRea / RPoem with pros and cons in 11 languages.
 - The original `COBOL_to` / `Java_to` are kept (not deleted); the merged copies in `converters/` gave identical output.
+
+## What's new (2026-11-22 to 2026-11-23)
+- COBOL (`converters/cobol_to`): added `SORT` (`USING` / `GIVING`, `INPUT` / `OUTPUT PROCEDURE`, `RELEASE`, `RETURN`), `MERGE`, `SEARCH` / `SEARCH ALL`, and `INSPECT ... LEADING` / `CHARACTERS`. `COMP-3` and `COMP` usages are now read.
+- Embedded SQL: `EXEC SQL` (cursors, `FETCH`, `SELECT ... INTO`), `WHENEVER`, indicator variables (including the `INDICATOR` keyword form), `SQLSTATE`, `EXECUTE IMMEDIATE`, and `PREPARE` / `EXECUTE ... USING`. The generated Python was really run; the Rust side is checked only with a fake handler.
+- `EXEC CICS` (minimal): `SEND TEXT` shows text, and `RETURN` / `ABEND` end the program. Other commands stay as a `TODO`. BMS maps are not reproduced.
+- Java (`converters/java_to`): method references, `Comparator`, `Collectors`, and anonymous classes (every method is kept). On the Rust side, List operations (`Vec`, `push`, index access, `for`) work, and the generated Rust passes `cargo check` for spring, jaxrs, servlet and spark.
+- Trial on Spring PetClinic REST (a project that starts from OpenAPI): routes found went from 1 to 37; the generated Python has 0 syntax errors; derived queries (`Or`, `Like`, comparisons, `OrderBy` and so on) run on an in-memory repository; the app can be imported (41 routes); and `this.field` names now match, so a call goes controller → service → repository.
+- Still open: repository and MapStruct mapper generation (calls stop at a `TODO`), a real database, a real run of the generated FastAPI, CICS maps and files, and Rust bodies with Map or Stream. pl2pl tests: 55 pass.

@@ -36,3 +36,11 @@
 - مخزن‌های خواهر که با هم توسعه می‌یابند: Reaxt، RPoRea، RPoem، RMojo، open-cosmo، RS-TypeScript، RS-JavaScript، RS-Node.js و pl2pl. وقتی یکی تغییر کند، بقیه همان روز بررسی می‌شوند.
 - `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` و `webpage/info.html` اصول طراحی RPoRea / RPoem را با مزایا و معایب به ۱۱ زبان توضیح می‌دهند.
 - `COBOL_to` / `Java_to` اصلی نگه داشته شده‌اند (حذف نشده‌اند)؛ نسخه‌های ادغام‌شده در `converters/` خروجی یکسان دادند.
+
+## تازه‌ها (از 2026-11-22 تا 2026-11-23)
+- COBOL (`converters/cobol_to`): دستورهای `SORT` (`USING` / `GIVING`، `INPUT` / `OUTPUT PROCEDURE`، `RELEASE`، `RETURN`)، `MERGE`، `SEARCH` / `SEARCH ALL` و `INSPECT ... LEADING` / `CHARACTERS` اضافه شدند. شکل‌های کاربرد `COMP-3` و `COMP` هم اکنون خوانده می‌شوند.
+- SQL توکار: `EXEC SQL` (مکان‌نماها، `FETCH`، `SELECT ... INTO`)، `WHENEVER`، متغیرهای نشانگر (از جمله شکل با کلیدواژهٔ `INDICATOR`)، `SQLSTATE`، `EXECUTE IMMEDIATE` و `PREPARE` / `EXECUTE ... USING`. Python تولیدشده واقعاً اجرا شد؛ سمت Rust فقط با یک کنترل‌گر آزمایشی بررسی شده است.
+- `EXEC CICS` (حداقلی): `SEND TEXT` متن را نشان می‌دهد و `RETURN` / `ABEND` برنامه را پایان می‌دهند. فرمان‌های دیگر به صورت `TODO` می‌مانند. نقشه‌های صفحهٔ BMS بازسازی نمی‌شوند.
+- Java (`converters/java_to`): ارجاع به متد، `Comparator`، `Collectors` و کلاس‌های ناشناس (همهٔ متدها نگه داشته می‌شوند). در سمت Rust عملیات List (`Vec`، `push`، دسترسی با اندیس، `for`) کار می‌کند و Rust تولیدشده برای spring، jaxrs، servlet و spark از `cargo check` گذشت.
+- آزمایش روی Spring PetClinic REST (پروژه‌ای که از OpenAPI شروع می‌شود): شمار مسیرهای پیداشده از 1 به 37 رسید؛ Python تولیدشده 0 خطای نحوی دارد؛ پرس‌وجوهای مشتق‌شده (`Or`، `Like`، مقایسه‌ها، `OrderBy` و مانند آن) روی مخزن درون‌حافظه اجرا می‌شوند؛ برنامه را می‌توان وارد کرد (41 مسیر)؛ و نام‌های `this.field` یکسان شدند، به‌طوری که فراخوانی از کنترلر به سرویس و سپس مخزن می‌رسد.
+- هنوز باز است: تولید مخزن و نگاشت‌گر MapStruct (فراخوانی‌ها در یک `TODO` می‌ایستند)، پایگاه دادهٔ واقعی، اجرای واقعی FastAPI تولیدشده، نقشه‌ها و فایل‌های CICS، و بدنه‌های Rust که Map یا Stream دارند. آزمون‌های pl2pl: 55 مورد گذشت.

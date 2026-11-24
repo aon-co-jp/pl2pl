@@ -64,5 +64,13 @@ pl2pl ir ./project --out ./out --format openapi
 - `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` и `webpage/info.html` объясняют принципы проектирования RPoRea / RPoem с плюсами и минусами на 11 языках.
 - Исходные `COBOL_to` / `Java_to` сохранены (не удалены); объединённые копии в `converters/` дали идентичный вывод.
 
+## Что нового (2026-11-22 — 2026-11-23)
+- COBOL (`converters/cobol_to`): добавлены `SORT` (`USING` / `GIVING`, `INPUT` / `OUTPUT PROCEDURE`, `RELEASE`, `RETURN`), `MERGE`, `SEARCH` / `SEARCH ALL` и `INSPECT ... LEADING` / `CHARACTERS`. Теперь также читаются формы `COMP-3` и `COMP`.
+- Встроенный SQL: `EXEC SQL` (курсоры, `FETCH`, `SELECT ... INTO`), `WHENEVER`, индикаторные переменные (в том числе запись с ключевым словом `INDICATOR`), `SQLSTATE`, `EXECUTE IMMEDIATE`, а также `PREPARE` / `EXECUTE ... USING`. Сгенерированный Python действительно запускали; для Rust проверка сделана только с условным обработчиком.
+- `EXEC CICS` (минимально): `SEND TEXT` выводит текст, а `RETURN` / `ABEND` завершают программу. Остальные команды остаются как `TODO`. Карты экранов BMS не воспроизводятся.
+- Java (`converters/java_to`): ссылки на методы, `Comparator`, `Collectors` и анонимные классы (все методы сохраняются). В Rust работают операции со списками (`Vec`, `push`, доступ по индексу, `for`), а сгенерированный Rust проходит `cargo check` для spring, jaxrs, servlet и spark.
+- Проба на Spring PetClinic REST (проект, который исходит из OpenAPI): найденных маршрутов стало 37 вместо 1; в сгенерированном Python 0 синтаксических ошибок; производные запросы (`Or`, `Like`, сравнения, `OrderBy` и т. д.) работают на репозитории в памяти; приложение можно импортировать (41 маршрут); имена `this.field` теперь совпадают, поэтому вызов проходит контроллер → сервис → репозиторий.
+- Ещё не сделано: генерация репозитория и маппера MapStruct (вызовы останавливаются на `TODO`), настоящая база данных, настоящий запуск сгенерированного FastAPI, карты и файлы CICS, а также тела на Rust с Map или Stream. Тесты pl2pl: 55 пройдено.
+
 ## Подробнее
 [LANGUAGES.md](../../LANGUAGES.md) (список языков) / [COMBINATIONS.md](../../COMBINATIONS.md) (сочетания) / [DESIGN.md](../../DESIGN.md) (проект, его пишет владелец) / [components/README.md](../../../components/README.md) (части, которые идут в комплекте). Эти файлы на японском.

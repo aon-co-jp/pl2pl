@@ -36,3 +36,11 @@
 - Dépôts frères développés ensemble : Reaxt, RPoRea, RPoem, RMojo, open-cosmo, RS-TypeScript, RS-JavaScript, RS-Node.js et pl2pl. Quand l'un change, les autres sont vérifiés le jour même.
 - `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` et `webpage/info.html` expliquent les principes de conception de RPoRea / RPoem, avec avantages et inconvénients, en 11 langues.
 - Les originaux `COBOL_to` / `Java_to` sont conservés (non supprimés) ; les copies fusionnées dans `converters/` ont donné une sortie identique.
+
+## Nouveautés (du 2026-11-22 au 2026-11-23)
+- COBOL (`converters/cobol_to`) : ajout de `SORT` (`USING` / `GIVING`, `INPUT` / `OUTPUT PROCEDURE`, `RELEASE`, `RETURN`), de `MERGE`, de `SEARCH` / `SEARCH ALL` et de `INSPECT ... LEADING` / `CHARACTERS`. Les usages `COMP-3` et `COMP` sont désormais lus.
+- SQL intégré : `EXEC SQL` (curseurs, `FETCH`, `SELECT ... INTO`), `WHENEVER`, variables indicatrices (y compris la forme avec le mot-clé `INDICATOR`), `SQLSTATE`, `EXECUTE IMMEDIATE`, ainsi que `PREPARE` / `EXECUTE ... USING`. Le Python généré a vraiment été exécuté ; du côté Rust, la vérification n'a été faite qu'avec un faux gestionnaire.
+- `EXEC CICS` (minimal) : `SEND TEXT` affiche du texte, et `RETURN` / `ABEND` terminent le programme. Les autres commandes restent en `TODO`. Les écrans BMS ne sont pas reproduits.
+- Java (`converters/java_to`) : références de méthode, `Comparator`, `Collectors` et classes anonymes (toutes les méthodes sont conservées). Côté Rust, les opérations sur List (`Vec`, `push`, accès par indice, `for`) fonctionnent, et le Rust généré passe `cargo check` pour spring, jaxrs, servlet et spark.
+- Essai sur Spring PetClinic REST (un projet qui part d'OpenAPI) : les routes trouvées sont passées de 1 à 37 ; le Python généré compte 0 erreur de syntaxe ; les requêtes dérivées (`Or`, `Like`, comparaisons, `OrderBy`, etc.) s'exécutent sur un dépôt en mémoire ; l'application peut être importée (41 routes) ; les noms de `this.field` sont maintenant alignés, si bien qu'un appel traverse contrôleur → service → dépôt.
+- Reste à faire : génération du dépôt et du mappeur MapStruct (les appels s'arrêtent sur un `TODO`), une vraie base de données, une vraie exécution du FastAPI généré, les écrans et fichiers CICS, et les corps Rust qui utilisent Map ou Stream. Tests de pl2pl : 55 réussis.

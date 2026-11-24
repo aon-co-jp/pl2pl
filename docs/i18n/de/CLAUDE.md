@@ -20,3 +20,11 @@
 - Schwester-Repositorys, die gemeinsam entwickelt werden: Reaxt, RPoRea, RPoem, RMojo, open-cosmo, RS-TypeScript, RS-JavaScript, RS-Node.js und pl2pl. Ändert sich eines, werden die anderen am selben Tag geprüft.
 - `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` und `webpage/info.html` erklären die Entwurfsprinzipien von RPoRea / RPoem mit Vor- und Nachteilen in 11 Sprachen.
 - Die ursprünglichen `COBOL_to` / `Java_to` bleiben erhalten (nicht gelöscht); die zusammengeführten Kopien in `converters/` lieferten identische Ausgabe.
+
+## Neu (2026-11-22 bis 2026-11-23)
+- COBOL (`converters/cobol_to`): neu sind `SORT` (`USING` / `GIVING`, `INPUT` / `OUTPUT PROCEDURE`, `RELEASE`, `RETURN`), `MERGE`, `SEARCH` / `SEARCH ALL` und `INSPECT ... LEADING` / `CHARACTERS`. Die Angaben `COMP-3` und `COMP` werden jetzt gelesen.
+- Eingebettetes SQL: `EXEC SQL` (Cursor, `FETCH`, `SELECT ... INTO`), `WHENEVER`, Indikatorvariablen (auch in der Schreibweise mit dem Schlüsselwort `INDICATOR`), `SQLSTATE`, `EXECUTE IMMEDIATE` sowie `PREPARE` / `EXECUTE ... USING`. Das erzeugte Python wurde wirklich ausgeführt; die Rust-Seite ist nur mit einem Schein-Handler geprüft.
+- `EXEC CICS` (minimal): `SEND TEXT` zeigt Text an, `RETURN` / `ABEND` beenden das Programm. Andere Befehle bleiben als `TODO` stehen. BMS-Masken werden nicht nachgebildet.
+- Java (`converters/java_to`): Methodenreferenzen, `Comparator`, `Collectors` und anonyme Klassen (alle Methoden bleiben erhalten). Auf der Rust-Seite funktionieren List-Operationen (`Vec`, `push`, Indexzugriff, `for`); das erzeugte Rust besteht `cargo check` für spring, jaxrs, servlet und spark.
+- Versuch mit Spring PetClinic REST (ein Projekt, das von OpenAPI ausgeht): Die gefundenen Routen stiegen von 1 auf 37; das erzeugte Python hat 0 Syntaxfehler; abgeleitete Abfragen (`Or`, `Like`, Vergleiche, `OrderBy` usw.) laufen auf einem Speicher-Repository; die App lässt sich importieren (41 Routen); die Namen von `this.field` stimmen jetzt überein, sodass ein Aufruf Controller → Service → Repository durchläuft.
+- Noch offen: Erzeugung von Repository und MapStruct-Mapper (Aufrufe bleiben an einem `TODO` stehen), eine echte Datenbank, ein echter Lauf des erzeugten FastAPI, CICS-Masken und -Dateien sowie Rust-Rümpfe mit Map oder Stream. pl2pl-Tests: 55 bestanden.

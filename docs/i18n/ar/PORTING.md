@@ -36,3 +36,11 @@
 - المستودعات الشقيقة تُطوَّر معًا: Reaxt وRPoRea وRPoem وRMojo وopen-cosmo وRS-TypeScript وRS-JavaScript وRS-Node.js وpl2pl. وعند تغيّر أحدها تُفحص البقية في اليوم نفسه.
 - يشرح `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` و`webpage/info.html` مبادئ تصميم RPoRea / RPoem مع المزايا والعيوب بـ 11 لغة.
 - بقي `COBOL_to` / `Java_to` الأصليان (لم يُحذفا)؛ وأعطت النسخ المدمجة في `converters/` مخرجات مطابقة.
+
+## الجديد (من 2026-11-22 إلى 2026-11-23)
+- COBOL (`converters/cobol_to`): أُضيفت `SORT` (`USING` / `GIVING` و`INPUT` / `OUTPUT PROCEDURE` و`RELEASE` و`RETURN`) و`MERGE` و`SEARCH` / `SEARCH ALL` و`INSPECT ... LEADING` / `CHARACTERS`. كما أصبحت صيغتا الاستخدام `COMP-3` و`COMP` مقروءتين.
+- SQL المضمَّن: `EXEC SQL` (المؤشرات و`FETCH` و`SELECT ... INTO`) و`WHENEVER` والمتغيرات المؤشِّرة (بما فيها صيغة الكلمة المفتاحية `INDICATOR`) و`SQLSTATE` و`EXECUTE IMMEDIATE` و`PREPARE` / `EXECUTE ... USING`. جرى تشغيل شيفرة Python المولَّدة فعلًا؛ أما جانب Rust فلم يُفحص إلا بمعالج تجريبي.
+- `EXEC CICS` (حدٌّ أدنى): `SEND TEXT` تعرض نصًّا، و`RETURN` / `ABEND` تُنهيان البرنامج. تبقى بقية الأوامر على هيئة `TODO`. ولا تُعاد خرائط الشاشة BMS.
+- Java (`converters/java_to`): مراجع الدوال و`Comparator` و`Collectors` والأصناف المجهولة (تُحفظ كل الدوال). في جانب Rust تعمل عمليات List (`Vec` و`push` والوصول بالفهرس و`for`)، وتجتاز شيفرة Rust المولَّدة `cargo check` مع spring وjaxrs وservlet وspark.
+- تجربة على Spring PetClinic REST (مشروع ينطلق من OpenAPI): ارتفع عدد المسارات المكتشفة من 1 إلى 37؛ وفي شيفرة Python المولَّدة 0 أخطاء نحوية؛ وتعمل الاستعلامات المشتقة (`Or` و`Like` والمقارنات و`OrderBy` وغيرها) على مستودع في الذاكرة؛ ويمكن استيراد التطبيق (41 مسارًا)؛ وقد توحّدت أسماء `this.field`، فصار الاستدعاء يمر بالمتحكّم ثم الخدمة ثم المستودع.
+- ما يزال مفتوحًا: توليد المستودع والمُحوِّل MapStruct (تتوقف الاستدعاءات عند `TODO`)، وقاعدة بيانات حقيقية، وتشغيل حقيقي لـ FastAPI المولَّد، وخرائط CICS وملفاتها، وأجسام Rust التي تحوي Map أو Stream. اختبارات pl2pl: نجح 55.

@@ -20,3 +20,11 @@
 - Repositórios irmãos desenvolvidos juntos: Reaxt, RPoRea, RPoem, RMojo, open-cosmo, RS-TypeScript, RS-JavaScript, RS-Node.js e pl2pl. Quando um muda, os outros são conferidos no mesmo dia.
 - `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` e `webpage/info.html` explicam os princípios de projeto do RPoRea / RPoem, com vantagens e desvantagens, em 11 idiomas.
 - Os originais `COBOL_to` / `Java_to` foram mantidos (não apagados); as cópias incorporadas em `converters/` deram saída idêntica.
+
+## Novidades (2026-11-22 a 2026-11-23)
+- COBOL (`converters/cobol_to`): foram adicionados `SORT` (`USING` / `GIVING`, `INPUT` / `OUTPUT PROCEDURE`, `RELEASE`, `RETURN`), `MERGE`, `SEARCH` / `SEARCH ALL` e `INSPECT ... LEADING` / `CHARACTERS`. Os usos `COMP-3` e `COMP` agora também são lidos.
+- SQL embutido: `EXEC SQL` (cursores, `FETCH`, `SELECT ... INTO`), `WHENEVER`, variáveis indicadoras (inclusive a forma com a palavra-chave `INDICATOR`), `SQLSTATE`, `EXECUTE IMMEDIATE` e `PREPARE` / `EXECUTE ... USING`. O Python gerado foi executado de verdade; no lado do Rust, a verificação foi feita só com um manipulador simulado.
+- `EXEC CICS` (mínimo): `SEND TEXT` mostra texto, e `RETURN` / `ABEND` encerram o programa. Os outros comandos ficam como `TODO`. Os mapas BMS não são reproduzidos.
+- Java (`converters/java_to`): referências a métodos, `Comparator`, `Collectors` e classes anônimas (todos os métodos são mantidos). No lado do Rust, as operações com List (`Vec`, `push`, acesso por índice, `for`) funcionam, e o Rust gerado passa no `cargo check` para spring, jaxrs, servlet e spark.
+- Teste com o Spring PetClinic REST (um projeto que parte do OpenAPI): as rotas encontradas passaram de 1 para 37; o Python gerado tem 0 erros de sintaxe; as consultas derivadas (`Or`, `Like`, comparações, `OrderBy` etc.) rodam em um repositório em memória; o aplicativo pode ser importado (41 rotas); e os nomes de `this.field` agora coincidem, de modo que uma chamada percorre controlador → serviço → repositório.
+- Ainda em aberto: gerar o repositório e o mapeador MapStruct (as chamadas param em um `TODO`), um banco de dados real, uma execução real do FastAPI gerado, os mapas e arquivos do CICS, e os corpos em Rust com Map ou Stream. Testes do pl2pl: 55 aprovados.

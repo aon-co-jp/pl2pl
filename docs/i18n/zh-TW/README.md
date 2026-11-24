@@ -64,5 +64,13 @@ pl2pl ir ./project --out ./out --format openapi
 - `pl2pl info [ui|nojs|json|connect|shared] [--lang ...]` 和 `webpage/info.html` 以 11 種語言說明 RPoRea / RPoem 的設計思想及其優缺點。
 - 原本的 `COBOL_to` / `Java_to` 保留(不刪除);`converters/` 中合併的副本輸出完全一致。
 
+## 新增內容(2026-11-22 至 2026-11-23)
+- COBOL(`converters/cobol_to`):新增 `SORT`(`USING` / `GIVING`、`INPUT` / `OUTPUT PROCEDURE`、`RELEASE`、`RETURN`)、`MERGE`、`SEARCH` / `SEARCH ALL`,以及 `INSPECT ... LEADING` / `CHARACTERS`。現在可以讀取 `COMP-3` 和 `COMP` 用法。
+- 內嵌 SQL:`EXEC SQL`(游標、`FETCH`、`SELECT ... INTO`)、`WHENEVER`、指示變數(包含 `INDICATOR` 關鍵字形式)、`SQLSTATE`、`EXECUTE IMMEDIATE`,以及 `PREPARE` / `EXECUTE ... USING`。產生的 Python 已實際執行過;Rust 端只用模擬處理器驗證過。
+- `EXEC CICS`(最小支援):`SEND TEXT` 用於顯示文字,`RETURN` / `ABEND` 用於結束程式。其他指令保留為 `TODO`。不重現 BMS 畫面對應。
+- Java(`converters/java_to`):支援方法參照、`Comparator`、`Collectors` 和匿名類別(保留每一個方法)。Rust 端支援 List 操作(`Vec`、`push`、索引存取、`for`),產生的 Rust 在 spring、jaxrs、servlet、spark 四種框架下都通過了 `cargo check`。
+- 在 Spring PetClinic REST(以 OpenAPI 為起點的專案)上的試驗:找到的路由從 1 條增加到 37 條;產生的 Python 語法錯誤為 0;衍生查詢(`Or`、`Like`、比較、`OrderBy` 等)可在記憶體儲存庫上執行;應用程式可以匯入(41 條路由);`this.field` 的名稱已統一,呼叫能依序經過控制器 → 服務 → 儲存庫。
+- 尚未完成:儲存庫與 MapStruct 對應器的產生(呼叫會停在 `TODO`)、真實資料庫、真正執行產生的 FastAPI、CICS 的畫面對應與檔案、含 Map 或 Stream 的 Rust 函式本體。pl2pl 測試:55 項通過。
+
 ## 了解更多
 [LANGUAGES.md](../../LANGUAGES.md)(語言清單) / [COMBINATIONS.md](../../COMBINATIONS.md)(組合) / [DESIGN.md](../../DESIGN.md)(設計，由擁有者撰寫) / [components/README.md](../../../components/README.md)(附帶的元件)。這些檔案為日文。
