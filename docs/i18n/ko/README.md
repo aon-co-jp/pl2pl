@@ -79,5 +79,16 @@ pl2pl ir ./project --out ./out --format openapi
 현황: 오래된 프로그램(COBOL, C, C++, Fortran, Java 등)을 선택한 언어와 프레임워크로 다시 써 주는 도구입니다. 최근 Java_to의 PetClinic 지원(ResponseEntity, Mapper, 상위 데이터 클래스)을 가져오고 다국어 문서를 동기화했습니다. 남은 일: 실제 Mac과 iPhone에서의 확인(여기에는 해당 기기가 없습니다). 번역: AI 번역이며 원어민의 확인은 아직 받지 않았습니다.
 
 
+<!-- directive-20261125-1130 -->
+## 2026-11-25 지시(11:30까지 확인 불필요)
+2026-11-25 11:30까지, 남은 일은 확인 없이 완성될 때까지 자동으로 진행합니다. 수요가 적거나 필요성이 낮다고 판단되더라도, 또는 처음부터 크게 다시 만들어야 하더라도 다른 방식으로 대신하지 않고 정면으로 다시 만듭니다. 동시에 개발하는 대상: COBOL_to, Java_to, MFastAPI, 2MFastAPI(다른 언어·프레임워크에서 MFastAPI 호환으로. Node.js와 TypeScript는 예외적으로 고를 수 있고, 고르지 않는 선택도 가능), RMojo, RPoRea(RPoem과 Reaxt의 통합), 2RPoRea(다른 언어·프레임워크에서 RPoRea로), Reaxt(React+Next.js+Nuxt.js+Nest.js의 통합). 하나를 바꾸면 다른 것도 확인하고, README, CLAUDE, PORTING, POLICY를 일본어와 영어로 같은 날 갱신합니다.
+
+<!-- directive-20261125-mojo -->
+## 2026-11-25 추가: MFastAPI는 Mojo에서 쓸 수 있어야 함
+MFastAPI는 **Mojo에서 사용할 수 있는 사양**을 유지합니다(Python 구문, Rust 구현, Mojo 지원. Windows에서는 RMojo의 `compat/wsl-bridge`를 거쳐 WSL의 Mojo를 사용). 2MFastAPI의 변환 결과도 Mojo에서 쓸 수 있어야 합니다. 현재 상태: `mojo/`는 참조 구현이며 단계 B·C의 서버는 실험적입니다. Mojo에서 호출해 보는 실제 환경 확인은, 확인한 범위만 "확인됨"이라고 씁니다. 11:30까지 확인 없이 자동으로 진행합니다.
+
+## 2026-11-25 추가: c2rust의 배열과 break/continue 지원
+`pl2pl c2rust`가 고정 길이 배열(`int a[8] = {...};`, `double w[4];`. 모자란 초깃값은 0으로 채움), 인덱스 읽기·쓰기(`a[j + 1]` → `a[(j + 1) as usize]`), `break;`, `continue;`, `while (1)` → `loop`를 지원합니다. 버블 정렬과 `while (1)`이 들어간 예제를 WSL의 gcc와 rustc로 돌려 출력이 완전히 일치했습니다(`1 2 3 4 5 7 8 9` / `6.00 12.00 9`). 단위 테스트 56개 통과. 아직 안 되는 것: 포인터, 구조체, 2차원 배열, 배열을 함수에 넘기기, 정수와 소수의 암묵적 형변환(`k * 1.5`는 `(double)k`라고 써야 함).
+
 ## 더 알아보기
 [LANGUAGES.md](../../LANGUAGES.md)(언어 목록) / [COMBINATIONS.md](../../COMBINATIONS.md)(조합) / [DESIGN.md](../../DESIGN.md)(설계, 소유자가 작성 중) / [components/README.md](../../../components/README.md)(함께 설치되는 부품). 이 파일들은 일본어입니다.
