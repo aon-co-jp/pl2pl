@@ -710,4 +710,23 @@ mod tests {
         assert_eq!(py_type("List<Map<String, Integer>>", &d, &d), "list[dict[str, int]]");
         assert_eq!(py_type("Optional<String>", &d, &d), "str | None");
     }
+
+    #[test]
+    fn multiple_impls_prefer_non_db_one() {
+        let u = parse_unit("F.java", "interface FooRepo { int n(); }
+class JdbcFooRepo implements FooRepo { public int n() { return 1; } }
+class JpaFooRepo implements FooRepo { public int n() { return 2; } }
+class MemFooRepo implements FooRepo { public int n() { return 3; } }");
+        let cm: HashMap<&str, &Class> = u.classes.iter().map(|c| (c.name.as_str(), c)).collect();
+        let mut impls: HashMap<String, Vec<&str>> = HashMap::new();
+        for c in &u.classes {
+            for i in c.implements.iter() {
+                impls.entry(i.clone()).or_default().push(c.name.as_str());
+            }
+        }
+        let d = HashSet::new();
+        assert_eq!(wire_value("FooRepo", &cm, &impls, &d), "MemFooRepo()");
+        impls.get_mut("FooRepo").unwrap().retain(|n| *n != "MemFooRepo");
+        assert_eq!(wire_value("FooRepo", &cm, &impls, &d), "JdbcFooRepo()");
+    }
 }
