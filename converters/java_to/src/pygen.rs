@@ -488,10 +488,29 @@ fn gen_class(c: &Class, class_map: &HashMap<&str, &Class>, impls: &HashMap<Strin
                     let known = class_map.contains_key(tname.as_str());
                     let t = if known { tname.clone() } else { "None".into() };
                     let p0 = &params[0];
-                    if is_many {
-                        body_lines.push(format!("        return [self._to({t}, v) for v in ({p0} or [])]"));
+                    // @Mapping(target, source / ignore / constant)
+                    let (mut ren, mut ign, mut cst) = (vec![], vec![], vec![]);
+                    for a in mth.anns.iter().filter(|a| a.name == "Mapping") {
+                        let Some(tg) = a.get("target") else { continue };
+                        let tg = field_name(tg).0;
+                        if a.get("ignore").is_some_and(|v| v == "true") {
+                            ign.push(format!("\"{tg}\""));
+                        } else if let Some(c) = a.get("constant") {
+                            cst.push(format!("\"{tg}\": {:?}", c));
+                        } else if let Some(sr) = a.get("source") {
+                            let sp: Vec<String> = sr.split('.').map(|x| field_name(x).0).collect();
+                            ren.push(format!("\"{tg}\": \"{}\"", sp.join(".")));
+                        }
+                    }
+                    let extra = if ren.is_empty() && ign.is_empty() && cst.is_empty() {
+                        String::new()
                     } else {
-                        body_lines.push(format!("        return self._to({t}, {p0})"));
+                        format!(", {{{}}}, ({}), {{{}}}", ren.join(", "), if ign.is_empty() { String::new() } else { ign.join(", ") + "," }, cst.join(", "))
+                    };
+                    if is_many {
+                        body_lines.push(format!("        return [self._to({t}, v{extra}) for v in ({p0} or [])]"));
+                    } else {
+                        body_lines.push(format!("        return self._to({t}, {p0}{extra})"));
                     }
                     m.uses.insert("rt");
                 } else if repo {
@@ -728,5 +747,21 @@ class MemFooRepo implements FooRepo { public int n() { return 3; } }");
         assert_eq!(wire_value("FooRepo", &cm, &impls, &d), "MemFooRepo()");
         impls.get_mut("FooRepo").unwrap().retain(|n| *n != "MemFooRepo");
         assert_eq!(wire_value("FooRepo", &cm, &impls, &d), "JdbcFooRepo()");
+    }
+
+    #[test]
+    fn mapstruct_mapping_annotations() {
+        let u = parse_unit("M.java", "import org.mapstruct.Mapper;
+@Mapper interface PM { @Mapping(target=\"fullName\", source=\"owner.name\") @Mapping(target=\"secret\", ignore=true) @Mapping(target=\"kind\", constant=\"pet\") PetDto toDto(Pet p); }
+class Pet {} class PetDto {}");
+        let cm: HashMap<&str, &Class> = u.classes.iter().map(|c| (c.name.as_str(), c)).collect();
+        let impls = HashMap::new();
+        let (d, e, sm) = (HashSet::new(), HashSet::new(), HashSet::new());
+        let mut m = Mod { lines: vec![], uses: BTreeSet::new() };
+        let (mut w, mut todo) = (vec![], 0usize);
+        gen_class(&u.classes[0], &cm, &impls, &d, &e, &sm, &mut m, &mut w, &mut todo);
+        let out = m.lines.join("
+");
+        assert!(out.contains("self._to(PetDto, p, {\"fullName\": \"owner.name\"}, (\"secret\",), {\"kind\": \"pet\"})"), "{out}");
     }
 }

@@ -266,17 +266,35 @@ class UriComponentsBuilder:
 class MapperBase:
     """MapStruct の `@Mapper` インターフェースの置き換え。同名の属性を写して戻り値の型を作る(足場)。"""
 
-    def _to(self, cls: Any, src: Any) -> Any:
+    @staticmethod
+    def _get(src: Any, path: str) -> Any:
+        """`owner.name` のような入れ子の属性を辿る(途中が None なら None)。"""
+        v = src
+        for part in path.split("."):
+            if v is None:
+                return None
+            v = v.get(part) if isinstance(v, dict) else getattr(v, part, None)
+        return v
+
+    def _to(self, cls: Any, src: Any, rename: dict | None = None, ignore: tuple = (), const: dict | None = None) -> Any:
+        """`@Mapping(target, source / ignore / constant)` に対応: rename={目的の名前: 元の名前}、ignore=無視する名前、const={名前: 固定値}。"""
         if src is None:
             return None
         if cls is None or isinstance(src, cls):
             return src
+        rename = rename or {}
+        const = const or {}
         fields = getattr(cls, "model_fields", None)
         names = list(fields) if fields else []
         kw: dict[str, Any] = {}
         for n in names:
-            v = src.get(n) if isinstance(src, dict) else getattr(src, n, None)
-            if v is None and "_" not in n:
+            if n in ignore:
+                continue
+            if n in const:
+                kw[n] = const[n]
+                continue
+            v = self._get(src, rename[n]) if n in rename else (src.get(n) if isinstance(src, dict) else getattr(src, n, None))
+            if v is None and n not in rename and "_" not in n:
                 snake = re.sub(r"(?<!^)(?=[A-Z])", "_", n).lower()
                 v = src.get(snake) if isinstance(src, dict) else getattr(src, snake, None)
             if v is not None:
