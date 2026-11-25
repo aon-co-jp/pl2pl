@@ -72,5 +72,21 @@ pl2pl ir ./project --out ./out --format openapi
 - Versuch mit Spring PetClinic REST (ein Projekt, das von OpenAPI ausgeht): Die gefundenen Routen stiegen von 1 auf 37; das erzeugte Python hat 0 Syntaxfehler; abgeleitete Abfragen (`Or`, `Like`, Vergleiche, `OrderBy` usw.) laufen auf einem Speicher-Repository; die App lässt sich importieren (41 Routen); die Namen von `this.field` stimmen jetzt überein, sodass ein Aufruf Controller → Service → Repository durchläuft.
 - Noch offen: Erzeugung von Repository und MapStruct-Mapper (Aufrufe bleiben an einem `TODO` stehen), eine echte Datenbank, ein echter Lauf des erzeugten FastAPI, CICS-Masken und -Dateien sowie Rust-Rümpfe mit Map oder Stream. pl2pl-Tests: 55 bestanden.
 
+## 2026-11-25 Stand und offene Punkte
+
+Stand: ein Werkzeug, das alte Programme (COBOL, C, C++, Fortran, Java u. a.) in die gewählte Sprache und das gewählte Framework umschreibt. Zuletzt wurde die PetClinic-Unterstützung von Java_to (ResponseEntity, Mapper, übergeordnete Datenklassen) übernommen und die mehrsprachige Dokumentation abgeglichen. Offen: Prüfung auf einem echten Mac und iPhone (solche Geräte haben wir hier nicht). Übersetzungen: KI-übersetzt (außer Japanisch und Englisch), noch nicht von Muttersprachlern geprüft.
+
+<!-- directive-20261125-1130 -->
+## 2026-11-25 Anweisung (bis 11:30 keine Rückfrage nötig)
+Bis 2026-11-25 11:30 wird Unerledigtes ohne Rückfrage automatisch bis zur Fertigstellung vorangetrieben. Auch wenn die Nachfrage gering oder die Notwendigkeit niedrig erscheint oder alles von Grund auf neu gebaut werden müsste, weichen wir nicht auf ein anderes Verfahren aus, sondern bauen es richtig neu. Gemeinsam entwickelt werden: COBOL_to, Java_to, MFastAPI, 2MFastAPI (von anderen Sprachen und Frameworks zu MFastAPI-kompatiblem Code; Node.js und TypeScript sind eine optionale Ausnahme, und man kann auch beides nicht wählen), RMojo, RPoRea (Integration von RPoem und Reaxt), 2RPoRea (von anderen Sprachen und Frameworks zu RPoRea) und Reaxt (Integration von React, Next.js, Nuxt.js und Nest.js). Ändert sich eines davon, werden die anderen geprüft, und README, CLAUDE, PORTING und POLICY werden am selben Tag auf Japanisch und Englisch aktualisiert.
+
+<!-- directive-20261125-mojo -->
+## 2026-11-25 Nachtrag: MFastAPI muss aus Mojo nutzbar sein
+MFastAPI behält die **Vorgabe, aus Mojo nutzbar zu sein** (Python-Syntax, Rust-Implementierung, Mojo-Unterstützung; unter Windows wird das echte Mojo in WSL über `compat/wsl-bridge` von RMojo angesteuert). Auch das Ergebnis von 2MFastAPI muss aus Mojo nutzbar sein. Aktueller Stand: `mojo/` ist eine Referenzimplementierung, und die Server der Stufen B und C sind experimentell. Als „geprüft“ bezeichnen wir nur, was wirklich ausgeführt wurde. Bis 11:30 geht es ohne Rückfrage automatisch weiter.
+
+## 2026-11-25 Nachtrag: c2rust – Arrays, break/continue
+
+`pl2pl c2rust` beherrscht jetzt Arrays fester Länge (`int a[8] = {...};`, `double w[4];`, fehlende Startwerte werden mit 0 aufgefüllt), lesende und schreibende Indexzugriffe (`a[j + 1]` wird zu `a[(j + 1) as usize]`), `break;`, `continue;` sowie `while (1)` als `loop`. Ein Beispiel mit Bubblesort und `while (1)` wurde in WSL mit gcc und rustc ausgeführt, und die Ausgaben stimmen vollständig überein (`1 2 3 4 5 7 8 9` / `6.00 12.00 9`). 56 Unit-Tests bestehen. Noch nicht: Zeiger, Strukturen, zweidimensionale Arrays, Arrays als Funktionsargumente und implizite Umwandlung zwischen Ganz- und Kommazahlen (`k * 1.5` muss als `(double)k` geschrieben werden).
+
 ## Mehr erfahren
 [LANGUAGES.md](../../LANGUAGES.md) (Liste der Sprachen) / [COMBINATIONS.md](../../COMBINATIONS.md) (Kombinationen) / [DESIGN.md](../../DESIGN.md) (der Entwurf, vom Eigentümer geschrieben) / [components/README.md](../../../components/README.md) (mitgelieferte Teile). Diese Dateien sind auf Japanisch.

@@ -1,4 +1,4 @@
-> Nota: el README.md en japonés de la raíz del repositorio es el original. Esta versión fue traducida con IA y revisada por una IA para que suene natural en el idioma; aún no la ha revisado una persona nativa.
+> Nota: el README.md en japonés de la raíz del repositorio es el original. Esta versión fue traducida con IA y revisada por una IA para que el español suene natural; todavía no la ha comprobado ninguna persona hablante nativa.
 
 # pl2pl
 
@@ -30,7 +30,7 @@ Ejecutamos `pl2pl watch` cada noche y cada mañana.
 1. Mira si han salido versiones nuevas de lenguajes y herramientas (la lista está en `registry/ecosystem.toml`).
 2. Prueba con la versión nueva. Si las pruebas pasan, actualiza por sí solo la «versión compatible».
 3. Si fallan, version-control (con ayuda de la IA) intenta arreglarlo.
-4. Si aun así no se arregla, envía un mensaje a los correos guardados y a LINE.
+4. Si aun así no se arregla, envía un mensaje a las direcciones de correo guardadas y a LINE.
 
 Ten en cuenta: con laravel, symfony, flask, django y algunos más, por ahora solo avisa de que «ha salido una versión nueva».
 En GitHub, también se ejecutan solas cada noche y cada mañana pruebas con las versiones más recientes.
@@ -71,6 +71,23 @@ pl2pl ir ./project --out ./out --format openapi
 - Java (`converters/java_to`): referencias a métodos, `Comparator`, `Collectors` y clases anónimas (se conservan todos los métodos). En el lado de Rust funcionan las operaciones con List (`Vec`, `push`, acceso por índice, `for`), y el Rust generado pasa `cargo check` con spring, jaxrs, servlet y spark.
 - Prueba con Spring PetClinic REST (un proyecto que parte de OpenAPI): las rutas encontradas pasaron de 1 a 37; el Python generado tiene 0 errores de sintaxis; las consultas derivadas (`Or`, `Like`, comparaciones, `OrderBy`, etc.) se ejecutan sobre un repositorio en memoria; la aplicación se puede importar (41 rutas); y los nombres de `this.field` ya coinciden, así que una llamada recorre controlador → servicio → repositorio.
 - Pendiente: generar el repositorio y el mapeador MapStruct (las llamadas se detienen en un `TODO`), una base de datos real, una ejecución real del FastAPI generado, los mapas y archivos de CICS, y los cuerpos en Rust con Map o Stream. Pruebas de pl2pl: 55 superadas.
+
+## 2026-11-25 Situación actual y pendientes
+
+*El japonés y el inglés son la base; los demás idiomas son traducciones con IA, aún sin revisión de nativos.*
+
+Estado: una herramienta que reescribe programas antiguos (COBOL, C, C++, Fortran, Java, etc.) en el lenguaje y el framework que elijas. Hace poco incorporó el soporte de PetClinic de Java_to (ResponseEntity, Mapper, clases de datos padre) y se sincronizó la documentación multilingüe. Pendiente: comprobar en un Mac y un iPhone reales (aquí no tenemos esos dispositivos). Traducciones: hechas por IA, aún sin revisión de hablantes nativos.
+
+<!-- directive-20261125-1130 -->
+## 2026-11-25 Instrucción (sin confirmación hasta las 11:30)
+Hasta el 2026-11-25 a las 11:30, lo pendiente se lleva hasta el final de forma automática, sin pedir confirmación. Aunque parezca que hay poca demanda o poca necesidad, o aunque haya que rehacer mucho desde cero, no se sustituye por otro método: se rehace de frente. Se desarrollan a la vez: COBOL_to, Java_to, MFastAPI, 2MFastAPI (convierte otros lenguajes y frameworks a código compatible con MFastAPI; Node.js y TypeScript se pueden elegir como excepción, y también se puede no elegirlos), RMojo, RPoRea (integración de RPoem y Reaxt), 2RPoRea (convierte otros lenguajes y frameworks a RPoRea) y Reaxt (integración de React + Next.js + Nuxt.js + Nest.js). Cuando cambia uno, se revisan los demás, y README, CLAUDE, PORTING y POLICY se actualizan en japonés e inglés el mismo día.
+
+<!-- directive-20261125-mojo -->
+## 2026-11-25 Adenda: MFastAPI debe poder usarse desde Mojo
+MFastAPI mantiene la **especificación de poder usarse desde Mojo** (sintaxis de Python, implementación en Rust, compatibilidad con Mojo; en Windows se usa el Mojo real de WSL a través de `compat/wsl-bridge` de RMojo). El resultado de 2MFastAPI también debe poder usarse desde Mojo. Estado actual: `mojo/` es una implementación de referencia, y los servidores de las etapas B y C son experimentales. Solo se escribe «comprobado» sobre lo que se ejecutó de verdad. Se continúa de forma automática, sin pedir confirmación, hasta las 11:30.
+
+## 2026-11-25 Adenda: c2rust, arrays y break/continue
+`pl2pl c2rust` ahora admite arrays (arreglos) de longitud fija (`int a[8] = {...};` y `double w[4];`; los valores iniciales que faltan se rellenan con 0), lectura y escritura por índice (`a[j + 1]` pasa a `a[(j + 1) as usize]`), `break;`, `continue;` y `while (1)` como `loop`. Un ejemplo con ordenación de burbuja y `while (1)` se compiló con gcc y rustc en WSL y las salidas coinciden por completo (`1 2 3 4 5 7 8 9` / `6.00 12.00 9`). Pruebas unitarias: 56 superadas. Aún no: punteros, estructuras, arrays de 2 dimensiones, pasar arrays a funciones y la conversión implícita entre entero y decimal (`k * 1.5` hay que escribirlo con `(double)k`).
 
 ## Más información
 [LANGUAGES.md](../../LANGUAGES.md) (lista de lenguajes) / [COMBINATIONS.md](../../COMBINATIONS.md) (combinaciones) / [DESIGN.md](../../DESIGN.md) (el diseño, escrito por el propietario) / [components/README.md](../../../components/README.md) (piezas que vienen con la herramienta). Estos archivos están en japonés.

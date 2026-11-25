@@ -1,4 +1,4 @@
-> Nota: o PORTING.md em japonês na raiz do repositório é o original. Esta versão foi traduzida por IA e revisada por uma IA quanto à naturalidade no idioma; ainda não foi revisada por uma pessoa nativa.
+> Nota: o PORTING.md em japonês na raiz do repositório é o original. Esta versão foi traduzida por IA e revisada por uma IA quanto à fluência de falante nativo; ainda não foi conferida por uma pessoa nativa.
 
 # pl2pl – passagem de bastão
 (As notas detalhadas anteriores estão em `docs/HISTORY-ja.md`, em japonês.)
@@ -44,3 +44,27 @@
 - Java (`converters/java_to`): referências a métodos, `Comparator`, `Collectors` e classes anônimas (todos os métodos são mantidos). No lado do Rust, as operações com List (`Vec`, `push`, acesso por índice, `for`) funcionam, e o Rust gerado passa no `cargo check` para spring, jaxrs, servlet e spark.
 - Teste com o Spring PetClinic REST (um projeto que parte do OpenAPI): as rotas encontradas passaram de 1 para 37; o Python gerado tem 0 erros de sintaxe; as consultas derivadas (`Or`, `Like`, comparações, `OrderBy` etc.) rodam em um repositório em memória; o aplicativo pode ser importado (41 rotas); e os nomes de `this.field` agora coincidem, de modo que uma chamada percorre controlador → serviço → repositório.
 - Ainda em aberto: gerar o repositório e o mapeador MapStruct (as chamadas param em um `TODO`), um banco de dados real, uma execução real do FastAPI gerado, os mapas e arquivos do CICS, e os corpos em Rust com Map ou Stream. Testes do pl2pl: 55 aprovados.
+
+## 2026-11-25 Situação e pendências
+
+Situação: uma ferramenta que reescreve programas antigos (COBOL, C, C++, Fortran, Java etc.) na linguagem e no framework que você escolher. Recentemente incorporou o suporte ao PetClinic do Java_to (ResponseEntity, Mapper, classes de dados pai) e a documentação em vários idiomas foi sincronizada. Pendente: verificar em um Mac e um iPhone de verdade (não temos esses aparelhos aqui). Traduções: feitas por IA, ainda não revisadas por falantes nativos.
+
+## 2026-11-25 Adendo: sincronização dos conversores
+Em `converters/cobol_to` foi incorporado o EXEC CICS LINK/XCTL → CALL do COBOL_to (`7d67bbf`) e, em `converters/java_to`, o operador ternário do Java_to (no corpo em Rust, `e9ac300`). Testes: Java_to 39, COBOL_to 25, pl2pl 55, todos aprovados. Pendente: Mac e iPhone de verdade; iniciar o FastAPI gerado com um banco de dados real.
+
+## 2026-11-25 Adendo: a escolha entre várias implementações, fixada por um teste
+Quando a interface de um repositório tem várias implementações, o gerador já preferia a que roda em memória (sem Jdbc nem Jpa no nome) e, se não houvesse, escolhia a primeira (a nota anterior de «não suportado» estava desatualizada). Agora isso está fixado pelo teste unitário `multiple_impls_prefer_non_db_one` (Java_to: 40 aprovados). Pendente: mapeadores complexos do MapStruct e iniciar com um banco de dados real.
+
+## 2026-11-25 Adendo: suporte ao @Mapping do MapStruct
+O `@Mapping(target=..., source="a.b")` (atributo de origem aninhado), o `ignore=true` e o `constant="..."` colocados nos métodos do mapeador agora são repassados ao `MapperBase._to(cls, src, rename, ignore, const)` do Python gerado. Coberto pelo teste unitário `mapstruct_mapping_annotations` (Java_to: 41 aprovados) e por uma verificação em execução (`owner.name` → `fullName`, ignore, constante). Pendente: a forma aninhada `@Mappings({...})`, `expression=`, `@MappingTarget` e iniciar com um banco de dados real.
+
+<!-- directive-20261125-1130 -->
+## 2026-11-25 Diretriz (sem confirmação até as 11:30)
+Até 2026-11-25 11:30, o que estiver pendente avança automaticamente até ficar pronto, sem pedir confirmação. Mesmo que a demanda pareça pequena, a necessidade pareça baixa ou seja preciso refazer tudo do zero em grande escala, não se troca por outro caminho: refazemos de frente. Desenvolvidos em conjunto: COBOL_to, Java_to, MFastAPI, 2MFastAPI (converte outras linguagens e frameworks para um código compatível com o MFastAPI; Node.js e TypeScript são uma exceção opcional, e também é permitido não escolher nenhum dos dois), RMojo, RPoRea (RPoem e Reaxt integrados), 2RPoRea (converte outras linguagens e frameworks para o RPoRea) e Reaxt (React + Next.js + Nuxt.js + Nest.js integrados). Quando um muda, conferem-se os outros e atualizam-se README, CLAUDE, PORTING e POLICY em japonês e inglês no mesmo dia.
+
+<!-- directive-20261125-mojo -->
+## 2026-11-25 Adendo: o MFastAPI deve poder ser usado a partir do Mojo
+O MFastAPI mantém a **especificação de poder ser usado a partir do Mojo** (sintaxe Python, núcleo em Rust, suporte a Mojo; no Windows, o Mojo de verdade dentro do WSL é acionado por meio do `compat/wsl-bridge` do RMojo). O resultado do 2MFastAPI também deve poder ser usado a partir do Mojo. Situação atual: `mojo/` é uma implementação de referência, e os servidores das etapas B e C são experimentais. Só o que foi realmente executado é chamado de «verificado». Seguimos automaticamente, sem pedir confirmação, até as 11:30.
+
+## 2026-11-25 Adendo: c2rust com arrays e break/continue
+O `pl2pl c2rust` agora entende arrays de tamanho fixo (`int a[8] = {...};`, `double w[4];`, com os valores iniciais que faltarem preenchidos com 0), leitura e escrita por índice (`a[j + 1]` vira `a[(j + 1) as usize]`), `break;`, `continue;` e `while (1)` como `loop`. Um exemplo com bubble sort e `while (1)` foi executado com gcc e rustc no WSL, e as saídas coincidiram exatamente (`1 2 3 4 5 7 8 9` / `6.00 12.00 9`). 56 testes unitários aprovados. Ainda não: ponteiros, structs, arrays de duas dimensões, passar arrays para funções e a conversão implícita entre inteiro e decimal (`k * 1.5` precisa ser escrito como `(double)k`).

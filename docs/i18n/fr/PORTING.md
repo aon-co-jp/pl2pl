@@ -15,7 +15,7 @@
 ## Reste à faire (le plus important d'abord)
 1. **Vérifier** : l'arrivée d'un vrai e-mail (`version-control --test-notify` ; ce PC n'a pas de réglages SMTP), la réparation automatique via version-control `--loop`, et un test avec le dernier fastapi (l'exécution de chaque nuit sur GitHub le vérifiera).
 2. Mettre les types et le contenu des fonctions dans l'IR. Faire passer la sortie FastAPI actuelle (`pl2pl php`) par l'IR. Si la recherche des routes laisse des choses de côté, envisager tree-sitter.
-3. `watch` a été essayé avec une vraie nouvelle version : avec fastapi 0.165.0 (starlette 1.10), `tests/run-php.sh` a réussi 49 contrôles, la version testée du registre passe donc à 0.165. Reste : les nouveaux laravel 13 / django 6.1 / spring-boot 4.1 restent « non vérifiés », car les tests de bout en bout n'utilisent pas les vrais frameworks (signalement seulement tant que de tels tests n'existent pas).
+3. `watch` a été essayé avec une vraie nouvelle version : avec fastapi 0.165.0 (starlette 1.10), `tests/run-php.sh` a réussi 49 contrôles, la version testée du registre passe donc à 0.165. Reste à voir : les nouveaux laravel 13 / django 6.1 / spring-boot 4.1 restent « non vérifiés », car les tests de bout en bout n'utilisent pas les vrais frameworks (signalement seulement tant que de tels tests n'existent pas).
 4. Programmer les exécutions du soir et du matin sur un PC (pas encore fait : la commande de vérification ne marche pas sur ce PC et donnerait de fausses alertes ; voir un exemple en haut de `scripts/pl2pl-watch.cmd`).
 5. (Fait) Une carte pl2pl est sur la page d'accueil de easy-web.tokyo et en ligne en production (open-easy-web `95cb1e7` ; l'ancien binaire est `server/target/release/open-easy-web-server.before-pl2pl-card-20261119`).
 6. PHP (fait, avec des limites) : le `@php` de Blade convertit maintenant les affectations et `++` `--` `+=` `-=` `*=` `/=` `.=` en `{% set %}` ; `$attributes` fonctionne comme sortie, ainsi que `->merge` (valeurs textuelles ou expressions convertibles), `->class([...])` (une liste de textes), `->only` et `->except` ; `morphToMany` (colonne de type dans la table pivot) ; et les composants Blade écrits en classes (`app/View/Components/*.php` : les arguments du constructeur deviennent des valeurs par défaut et `_props`, et un `view('x.y')` dans `render()` est suivi) (55 contrôles de bout en bout, 41 tests unitaires). Reste à faire : les méthodes publiques d'une classe de composant (un `{{ $method() }}` dans son gabarit reste un TODO, et le rapport les compte), `->class()` avec clés (conditionnel), et `@php` avec if/foreach ou appels de fonctions (reste un TODO).
@@ -44,3 +44,31 @@
 - Java (`converters/java_to`) : références de méthode, `Comparator`, `Collectors` et classes anonymes (toutes les méthodes sont conservées). Côté Rust, les opérations sur List (`Vec`, `push`, accès par indice, `for`) fonctionnent, et le Rust généré passe `cargo check` pour spring, jaxrs, servlet et spark.
 - Essai sur Spring PetClinic REST (un projet qui part d'OpenAPI) : les routes trouvées sont passées de 1 à 37 ; le Python généré compte 0 erreur de syntaxe ; les requêtes dérivées (`Or`, `Like`, comparaisons, `OrderBy`, etc.) s'exécutent sur un dépôt en mémoire ; l'application peut être importée (41 routes) ; les noms de `this.field` sont maintenant alignés, si bien qu'un appel traverse contrôleur → service → dépôt.
 - Reste à faire : génération du dépôt et du mappeur MapStruct (les appels s'arrêtent sur un `TODO`), une vraie base de données, une vraie exécution du FastAPI généré, les écrans et fichiers CICS, et les corps Rust qui utilisent Map ou Stream. Tests de pl2pl : 55 réussis.
+
+## 2026-11-25 État et points restants
+
+État : un outil qui récrit de vieux programmes (COBOL, C, C++, Fortran, Java, etc.) dans le langage et le framework de votre choix. Récemment, il a intégré la prise en charge de PetClinic de Java_to (ResponseEntity, Mapper, classes de données parentes), et la documentation multilingue a été synchronisée. Reste à faire : vérifier sur un vrai Mac et un vrai iPhone (nous n'avons pas ces appareils ici). Traductions : faites par IA (hors japonais et anglais), pas encore relues par des personnes de langue maternelle.
+
+## 2026-11-25 Ajout : synchronisation des convertisseurs
+
+Nous avons intégré dans `converters/cobol_to` la conversion de EXEC CICS LINK/XCTL en CALL de COBOL_to (`7d67bbf`), et dans `converters/java_to` l'opérateur ternaire de Java_to (corps Rust, `e9ac300`). Tests : Java_to 39, COBOL_to 25, pl2pl 55, tous réussis. Reste à faire : de vrais Mac et iPhone, et le démarrage des FastAPI générés avec une vraie base de données.
+
+## 2026-11-25 Ajout : le choix entre plusieurs implémentations est fixé par un test
+
+Quand une interface de dépôt a plusieurs implémentations, le générateur préférait déjà celle qui tourne en mémoire (dont le nom ne contient ni Jdbc ni Jpa) et, à défaut, prenait la première (l'ancienne mention « non pris en charge » était périmée). C'est désormais fixé par le test unitaire `multiple_impls_prefer_non_db_one` (Java_to : 40 réussis). Reste à faire : les mappeurs MapStruct complexes et le démarrage avec une vraie base de données.
+
+## 2026-11-25 Ajout : prise en charge de @Mapping de MapStruct
+
+Les `@Mapping(target=..., source="a.b")` (attribut source imbriqué), `ignore=true` et `constant="..."` placés sur les méthodes d'un mappeur sont désormais transmis à `MapperBase._to(cls, src, rename, ignore, const)` dans le Python généré. Cela est couvert par le test unitaire `mapstruct_mapping_annotations` (Java_to : 41 réussis) et par une vérification à l'exécution (`owner.name` → `fullName`, ignore, constante). Reste à faire : la forme imbriquée `@Mappings({...})`, `expression=`, `@MappingTarget` et le démarrage avec une vraie base de données.
+
+<!-- directive-20261125-1130 -->
+## 2026-11-25 Directive (pas de confirmation jusqu'à 11:30)
+Jusqu'au 2026-11-25 11:30, mener à bien, automatiquement et sans demander confirmation, tout le travail inachevé. Même si la demande paraît faible ou peu nécessaire, ou s'il faut tout refaire de zéro à grande échelle, ne pas s'en tirer par une autre méthode : refaire le travail pour de bon. Développés ensemble : COBOL_to, Java_to, MFastAPI, 2MFastAPI (convertit d'autres langages et frameworks vers du code compatible MFastAPI ; Node.js et TypeScript sont une exception facultative, et ne choisir ni l'un ni l'autre est permis), RMojo, RPoRea (RPoem et Reaxt intégrés), 2RPoRea (convertit d'autres langages et frameworks vers RPoRea) et Reaxt (React + Next.js + Nuxt.js + Nest.js intégrés). Quand l'un change, vérifier les autres et mettre à jour README, CLAUDE, PORTING et POLICY en japonais et en anglais le même jour.
+
+<!-- directive-20261125-mojo -->
+## 2026-11-25 Ajout : MFastAPI doit être utilisable depuis Mojo
+MFastAPI garde la **spécification d'être utilisable depuis Mojo** (syntaxe Python, cœur en Rust, prise en charge de Mojo ; sous Windows, le vrai Mojo dans WSL est piloté via `compat/wsl-bridge` de RMojo). Le résultat de 2MFastAPI doit lui aussi être utilisable depuis Mojo. État actuel : `mojo/` est une implémentation de référence, et ses serveurs des étapes B et C sont expérimentaux. Seul ce qui a réellement été exécuté est qualifié de « vérifié ». On continue automatiquement et sans demander confirmation jusqu'à 11:30.
+
+## 2026-11-25 Ajout : c2rust, tableaux et break/continue
+
+`pl2pl c2rust` gère désormais les tableaux de taille fixe (`int a[8] = {...};`, `double w[4];`, les valeurs initiales manquantes étant complétées par 0), la lecture et l'écriture par indice (`a[j + 1]` devient `a[(j + 1) as usize]`), `break;`, `continue;` et `while (1)` → `loop`. Un exemple contenant un tri à bulles et un `while (1)` a été compilé et exécuté avec gcc et rustc dans WSL, et les sorties sont strictement identiques (`1 2 3 4 5 7 8 9` / `6.00 12.00 9`). 56 tests unitaires réussis. Pas encore pris en charge : les pointeurs, les structures, les tableaux à deux dimensions, le passage d'un tableau à une fonction et la conversion implicite entre entier et décimal (`k * 1.5` doit s'écrire `(double)k`).

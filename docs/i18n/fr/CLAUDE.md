@@ -28,3 +28,33 @@
 - Java (`converters/java_to`) : références de méthode, `Comparator`, `Collectors` et classes anonymes (toutes les méthodes sont conservées). Côté Rust, les opérations sur List (`Vec`, `push`, accès par indice, `for`) fonctionnent, et le Rust généré passe `cargo check` pour spring, jaxrs, servlet et spark.
 - Essai sur Spring PetClinic REST (un projet qui part d'OpenAPI) : les routes trouvées sont passées de 1 à 37 ; le Python généré compte 0 erreur de syntaxe ; les requêtes dérivées (`Or`, `Like`, comparaisons, `OrderBy`, etc.) s'exécutent sur un dépôt en mémoire ; l'application peut être importée (41 routes) ; les noms de `this.field` sont maintenant alignés, si bien qu'un appel traverse contrôleur → service → dépôt.
 - Reste à faire : génération du dépôt et du mappeur MapStruct (les appels s'arrêtent sur un `TODO`), une vraie base de données, une vraie exécution du FastAPI généré, les écrans et fichiers CICS, et les corps Rust qui utilisent Map ou Stream. Tests de pl2pl : 55 réussis.
+
+## 2026-11-25 État et points restants
+
+État : un outil qui récrit de vieux programmes (COBOL, C, C++, Fortran, Java, etc.) dans le langage et le framework de votre choix. Récemment, il a intégré la prise en charge de PetClinic de Java_to (ResponseEntity, Mapper, classes de données parentes), et la documentation multilingue a été synchronisée. Reste à faire : vérifier sur un vrai Mac et un vrai iPhone (nous n'avons pas ces appareils ici). Traductions : faites par IA (hors japonais et anglais), pas encore relues par des personnes de langue maternelle.
+
+## 2026-11-25 Ajout : synchronisation des convertisseurs
+
+Nous avons intégré dans `converters/cobol_to` la conversion de EXEC CICS LINK/XCTL en CALL de COBOL_to (`7d67bbf`), et dans `converters/java_to` l'opérateur ternaire de Java_to (corps Rust, `e9ac300`). Tests : Java_to 39, COBOL_to 25, pl2pl 55, tous réussis. Reste à faire : de vrais Mac et iPhone, et le démarrage des FastAPI générés avec une vraie base de données.
+
+## 2026-11-25 Ajout : le choix entre plusieurs implémentations est fixé par un test
+
+Quand une interface de dépôt a plusieurs implémentations, le générateur préférait déjà celle qui tourne en mémoire (dont le nom ne contient ni Jdbc ni Jpa) et, à défaut, prenait la première (l'ancienne mention « non pris en charge » était périmée). C'est désormais fixé par le test unitaire `multiple_impls_prefer_non_db_one` (Java_to : 40 réussis). Reste à faire : les mappeurs MapStruct complexes et le démarrage avec une vraie base de données.
+
+## 2026-11-25 Ajout : prise en charge de @Mapping de MapStruct
+
+Les `@Mapping(target=..., source="a.b")` (attribut source imbriqué), `ignore=true` et `constant="..."` placés sur les méthodes d'un mappeur sont désormais transmis à `MapperBase._to(cls, src, rename, ignore, const)` dans le Python généré. Cela est couvert par le test unitaire `mapstruct_mapping_annotations` (Java_to : 41 réussis) et par une vérification à l'exécution (`owner.name` → `fullName`, ignore, constante). Reste à faire : la forme imbriquée `@Mappings({...})`, `expression=`, `@MappingTarget` et le démarrage avec une vraie base de données.
+
+<!-- directive-20261125-1130 -->
+## 2026-11-25 Directive (pas de confirmation jusqu'à 11:30)
+Jusqu'au 2026-11-25 11:30, mener à bien, automatiquement et sans demander confirmation, tout le travail inachevé. Même si la demande paraît faible ou peu nécessaire, ou s'il faut tout refaire de zéro à grande échelle, ne pas s'en tirer par une autre méthode : refaire le travail pour de bon. Développés ensemble : COBOL_to, Java_to, MFastAPI, 2MFastAPI (convertit d'autres langages et frameworks vers du code compatible MFastAPI ; Node.js et TypeScript sont une exception facultative, et ne choisir ni l'un ni l'autre est permis), RMojo, RPoRea (RPoem et Reaxt intégrés), 2RPoRea (convertit d'autres langages et frameworks vers RPoRea) et Reaxt (React + Next.js + Nuxt.js + Nest.js intégrés). Quand l'un change, vérifier les autres et mettre à jour README, CLAUDE, PORTING et POLICY en japonais et en anglais le même jour.
+
+<!-- directive-20261125-mojo -->
+## 2026-11-25 Ajout : MFastAPI doit être utilisable depuis Mojo
+MFastAPI garde la **spécification d'être utilisable depuis Mojo** (syntaxe Python, cœur en Rust, prise en charge de Mojo ; sous Windows, le vrai Mojo dans WSL est piloté via `compat/wsl-bridge` de RMojo). Le résultat de 2MFastAPI doit lui aussi être utilisable depuis Mojo. État actuel : `mojo/` est une implémentation de référence, et ses serveurs des étapes B et C sont expérimentaux. Seul ce qui a réellement été exécuté est qualifié de « vérifié ». On continue automatiquement et sans demander confirmation jusqu'à 11:30.
+
+## Politique d'API Versionless, sans version (2026-11-25)
+Les API de ce dépôt sont **Versionless** : pas de `v1` ni équivalent dans les URL ou les noms de paquets ; elles évoluent en ajoutant seulement, sans casser la compatibilité. On ne fait qu'ajouter des champs ; les champs ajoutés sont facultatifs ; les champs inconnus sont ignorés ; pour renommer, on ajoute le nouveau nom et on déclare l'ancien obsolète (délai par défaut : 6 mois ou plus, suppression seulement après avoir confirmé que plus rien ne l'utilise) ; les enum acceptent les valeurs inconnues ; les correctifs urgents de sécurité font exception. Les noms `.v1` existants restent pour l'instant afin de ne pas casser les appelants ; on ajoute un alias sans version et on retire `.v1` par étapes. Détails et sources : fin de [`runo/API-POLICY.md`](https://github.com/aon-co-jp/runo/blob/main/API-POLICY.md). La mise en œuvre se fait étape par étape.
+
+## Politique d'API : abandon total de REST, vers gRPC / Connect
+Ce dépôt **ne crée aucune nouvelle API REST**. Les API appelées depuis un navigateur ou `curl` utilisent des **appels simples Connect** (`POST /<paquet>.<Service>/<Method>`, `content-type: application/json`) ; entre services, on utilise **gRPC / gRPC-web**. GraphQL est en lecture seule. Le REST existant est migré quand on y touche, et l'ancienne route est supprimée après la migration. Le JSON se lit avec RS-JSON (`from_str_secure` / `parse_secure`). Les seules exceptions sont les cas où la forme est dictée par la norme de l'autre partie (ACME, rappels OAuth/OIDC, webhooks de tiers, contrôles de santé, fichiers statiques, OTLP). En cas de doute, choisir Connect. Source de référence : le lien ci-dessus.

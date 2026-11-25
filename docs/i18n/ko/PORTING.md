@@ -1,4 +1,4 @@
-> 안내: 저장소 루트의 일본어 PORTING.md가 원문입니다. 이 문서는 쉬운 말로 쓴 것으로, AI가 번역하고 AI가 원어민 수준의 자연스러움을 검수했습니다. 사람 원어민의 검수는 아직 받지 않았습니다.
+> 안내: 저장소 루트의 일본어 PORTING.md가 원문입니다. 이 문서는 AI가 쉬운 말로 번역하고, 다시 AI가 원어민 수준으로 자연스러운지 검수했습니다. 사람 원어민의 확인은 아직 받지 않았습니다.
 
 # pl2pl 인수인계
 (지난 자세한 기록은 `docs/HISTORY-ja.md`에 있습니다. 일본어입니다.)
@@ -44,3 +44,27 @@
 - Java(`converters/java_to`): 메서드 참조, `Comparator`, `Collectors`, 익명 클래스(모든 메서드를 유지)를 지원합니다. Rust 쪽에서는 List 연산(`Vec`, `push`, 인덱스 접근, `for`)이 되고, 생성된 Rust는 spring, jaxrs, servlet, spark 모두 `cargo check`를 통과했습니다.
 - Spring PetClinic REST(OpenAPI에서 출발하는 프로젝트)로 시험한 결과: 찾은 경로가 1개에서 37개로 늘었고, 생성된 Python의 구문 오류는 0개이며, 파생 쿼리(`Or`, `Like`, 비교, `OrderBy` 등)가 메모리 저장소에서 실행되고, 앱을 import할 수 있으며(경로 41개), `this.field` 이름을 맞춰서 호출이 컨트롤러 → 서비스 → 저장소까지 진행됩니다.
 - 아직 남은 일: 저장소와 MapStruct 매퍼 생성(호출이 `TODO`에서 멈춤), 실제 데이터베이스, 생성된 FastAPI의 실제 실행, CICS 맵과 파일, Map이나 Stream이 들어간 Rust 본문. pl2pl 테스트: 55개 통과.
+
+## 2026-11-25 현황·남은 일
+
+현황: 오래된 프로그램(COBOL, C, C++, Fortran, Java 등)을 선택한 언어와 프레임워크로 다시 써 주는 도구입니다. 최근 Java_to의 PetClinic 지원(ResponseEntity, Mapper, 상위 데이터 클래스)을 가져오고 다국어 문서를 동기화했습니다. 남은 일: 실제 Mac과 iPhone에서의 확인(여기에는 해당 기기가 없습니다). 번역: AI 번역이며 원어민의 확인은 아직 받지 않았습니다.
+
+## 2026-11-25 추가: 변환기 동기화
+`converters/cobol_to`에 COBOL_to의 EXEC CICS LINK/XCTL → CALL(`7d67bbf`)을, `converters/java_to`에 Java_to의 삼항 연산자(Rust 함수 본문, `e9ac300`)를 가져왔습니다. 시험: Java_to 39개, COBOL_to 25개, pl2pl 55개, 모두 통과했습니다. 남은 일: Mac·iPhone 실제 기기, 생성한 FastAPI를 실제 DB로 띄워 보는 확인.
+
+## 2026-11-25 추가: 구현이 여러 개일 때의 선택 방식을 시험으로 고정
+저장소 인터페이스에 구현이 여러 개 있을 때, 메모리에서 동작하는 것(이름에 Jdbc·Jpa가 들어가지 않는 것)을 우선하고 없으면 맨 앞의 것을 고르는 처리는 이미 구현돼 있었습니다(이전의 "미지원"이라는 설명은 낡은 내용입니다). 단위 테스트 `multiple_impls_prefer_non_db_one`으로 고정했습니다(Java_to 40개 통과). 남은 일: MapStruct의 복잡한 매퍼, 실제 DB로 띄워 보는 확인.
+
+## 2026-11-25 추가: MapStruct의 @Mapping 지원
+매퍼 메서드에 붙인 `@Mapping(target=..., source="a.b")`(중첩된 원본 속성), `ignore=true`, `constant="..."`를 생성하는 Python의 `MapperBase._to(cls, src, rename, ignore, const)`로 넘기게 했습니다. 단위 테스트 `mapstruct_mapping_annotations`(Java_to 41개 통과)와 실행 시 동작 확인(`owner.name` → `fullName`, ignore, 상수)을 했습니다. 남은 일: `@Mappings({...})`의 중첩 표기, `expression=`, `@MappingTarget`, 실제 DB로 띄워 보는 확인.
+
+## 2026-11-25 추가: c2rust의 배열과 break/continue 지원
+`pl2pl c2rust`가 고정 길이 배열(`int a[8] = {...};`, `double w[4];`. 모자란 초깃값은 0으로 채움), 인덱스 읽기·쓰기(`a[j + 1]` → `a[(j + 1) as usize]`), `break;`, `continue;`, `while (1)` → `loop`를 지원합니다. 버블 정렬과 `while (1)`이 들어간 예제를 WSL의 gcc와 rustc로 돌려 출력이 완전히 일치했습니다(`1 2 3 4 5 7 8 9` / `6.00 12.00 9`). 단위 테스트 56개 통과. 아직 안 되는 것: 포인터, 구조체, 2차원 배열, 배열을 함수에 넘기기, 정수와 소수의 암묵적 형변환(`k * 1.5`는 `(double)k`라고 써야 함).
+
+<!-- directive-20261125-1130 -->
+## 2026-11-25 지시(11:30까지 확인 불필요)
+2026-11-25 11:30까지, 남은 일은 확인 없이 완성될 때까지 자동으로 진행합니다. 수요가 적거나 필요성이 낮다고 판단되더라도, 또는 처음부터 크게 다시 만들어야 하더라도 다른 방식으로 대신하지 않고 정면으로 다시 만듭니다. 동시에 개발하는 대상: COBOL_to, Java_to, MFastAPI, 2MFastAPI(다른 언어·프레임워크에서 MFastAPI 호환으로. Node.js와 TypeScript는 예외적으로 고를 수 있고, 고르지 않는 선택도 가능), RMojo, RPoRea(RPoem과 Reaxt의 통합), 2RPoRea(다른 언어·프레임워크에서 RPoRea로), Reaxt(React+Next.js+Nuxt.js+Nest.js의 통합). 하나를 바꾸면 다른 것도 확인하고, README, CLAUDE, PORTING, POLICY를 일본어와 영어로 같은 날 갱신합니다.
+
+<!-- directive-20261125-mojo -->
+## 2026-11-25 추가: MFastAPI는 Mojo에서 쓸 수 있어야 함
+MFastAPI는 **Mojo에서 사용할 수 있는 사양**을 유지합니다(Python 구문, Rust 구현, Mojo 지원. Windows에서는 RMojo의 `compat/wsl-bridge`를 거쳐 WSL의 Mojo를 사용). 2MFastAPI의 변환 결과도 Mojo에서 쓸 수 있어야 합니다. 현재 상태: `mojo/`는 참조 구현이며 단계 B·C의 서버는 실험적입니다. Mojo에서 호출해 보는 실제 환경 확인은, 확인한 범위만 "확인됨"이라고 씁니다. 11:30까지 확인 없이 자동으로 진행합니다.

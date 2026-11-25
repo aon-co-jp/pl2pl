@@ -1,4 +1,4 @@
-> Nota: el CLAUDE.md en japonés de la raíz del repositorio es el original. Esta versión fue traducida con IA y revisada por una IA para que suene natural en el idioma; aún no la ha revisado una persona nativa.
+> Nota: el CLAUDE.md en japonés de la raíz del repositorio es el original. Esta versión fue traducida con IA y revisada por una IA para que el español suene natural; todavía no la ha comprobado ninguna persona hablante nativa.
 
 # pl2pl – notas de desarrollo
 - **Función**: una herramienta que reescribe código entre lenguajes, frameworks y sistemas operativos (hecha en Rust, en `src/`). Los lenguajes de origen están en `docs/LANGUAGES.md` y las combinaciones en `docs/COMBINATIONS.md`. El propietario escribe el diseño en `docs/DESIGN.md`, poco a poco. **Nunca inventes la especificación en su nombre.**
@@ -28,3 +28,30 @@
 - Java (`converters/java_to`): referencias a métodos, `Comparator`, `Collectors` y clases anónimas (se conservan todos los métodos). En el lado de Rust funcionan las operaciones con List (`Vec`, `push`, acceso por índice, `for`), y el Rust generado pasa `cargo check` con spring, jaxrs, servlet y spark.
 - Prueba con Spring PetClinic REST (un proyecto que parte de OpenAPI): las rutas encontradas pasaron de 1 a 37; el Python generado tiene 0 errores de sintaxis; las consultas derivadas (`Or`, `Like`, comparaciones, `OrderBy`, etc.) se ejecutan sobre un repositorio en memoria; la aplicación se puede importar (41 rutas); y los nombres de `this.field` ya coinciden, así que una llamada recorre controlador → servicio → repositorio.
 - Pendiente: generar el repositorio y el mapeador MapStruct (las llamadas se detienen en un `TODO`), una base de datos real, una ejecución real del FastAPI generado, los mapas y archivos de CICS, y los cuerpos en Rust con Map o Stream. Pruebas de pl2pl: 55 superadas.
+
+## 2026-11-25 Situación actual y pendientes
+
+Estado: una herramienta que reescribe programas antiguos (COBOL, C, C++, Fortran, Java, etc.) en el lenguaje y el framework que elijas. Hace poco incorporó el soporte de PetClinic de Java_to (ResponseEntity, Mapper, clases de datos padre) y se sincronizó la documentación multilingüe. Pendiente: comprobar en un Mac y un iPhone reales (aquí no tenemos esos dispositivos). Traducciones: hechas por IA, aún sin revisión de hablantes nativos.
+
+## 2026-11-25 Adenda: sincronización de los conversores
+Se incorporaron a `converters/cobol_to` el paso de EXEC CICS LINK/XCTL a CALL de COBOL_to (`7d67bbf`) y a `converters/java_to` el operador ternario de Java_to en los cuerpos de Rust (`e9ac300`). Pruebas: Java_to 39, COBOL_to 25 y pl2pl 55, todas superadas. Pendiente: dispositivos Mac e iPhone reales y comprobar que el FastAPI generado arranca con una base de datos real.
+
+## 2026-11-25 Adenda: la elección entre varias implementaciones, fijada con una prueba
+Cuando la interfaz de un repositorio tiene varias implementaciones, el generador ya daba prioridad a la que funciona en memoria (sin Jdbc ni Jpa en el nombre) y, si no hay, tomaba la primera (la nota anterior de «no admitido» estaba desfasada). Ahora queda fijado con la prueba unitaria `multiple_impls_prefer_non_db_one` (Java_to: 40 superadas). Pendiente: mapeadores complejos de MapStruct y comprobar que arranca con una base de datos real.
+
+## 2026-11-25 Adenda: soporte de @Mapping de MapStruct
+`@Mapping(target=..., source="a.b")` (atributo de origen anidado), `ignore=true` y `constant="..."`, puestos en los métodos del mapeador, ahora se pasan a `MapperBase._to(cls, src, rename, ignore, const)` del Python generado. Se cubre con la prueba unitaria `mapstruct_mapping_annotations` (Java_to: 41 superadas) y con una comprobación en tiempo de ejecución (`owner.name` a `fullName`, ignore y constante). Pendiente: la forma anidada `@Mappings({...})`, `expression=`, `@MappingTarget` y comprobar que arranca con una base de datos real.
+
+<!-- directive-20261125-1130 -->
+## 2026-11-25 Instrucción (sin confirmación hasta las 11:30)
+Hasta el 2026-11-25 a las 11:30, lo pendiente se lleva hasta el final de forma automática, sin pedir confirmación. Aunque parezca que hay poca demanda o poca necesidad, o aunque haya que rehacer mucho desde cero, no se sustituye por otro método: se rehace de frente. Se desarrollan a la vez: COBOL_to, Java_to, MFastAPI, 2MFastAPI (convierte otros lenguajes y frameworks a código compatible con MFastAPI; Node.js y TypeScript se pueden elegir como excepción, y también se puede no elegirlos), RMojo, RPoRea (integración de RPoem y Reaxt), 2RPoRea (convierte otros lenguajes y frameworks a RPoRea) y Reaxt (integración de React + Next.js + Nuxt.js + Nest.js). Cuando cambia uno, se revisan los demás, y README, CLAUDE, PORTING y POLICY se actualizan en japonés e inglés el mismo día.
+
+<!-- directive-20261125-mojo -->
+## 2026-11-25 Adenda: MFastAPI debe poder usarse desde Mojo
+MFastAPI mantiene la **especificación de poder usarse desde Mojo** (sintaxis de Python, implementación en Rust, compatibilidad con Mojo; en Windows se usa el Mojo real de WSL a través de `compat/wsl-bridge` de RMojo). El resultado de 2MFastAPI también debe poder usarse desde Mojo. Estado actual: `mojo/` es una implementación de referencia, y los servidores de las etapas B y C son experimentales. Solo se escribe «comprobado» sobre lo que se ejecutó de verdad. Se continúa de forma automática, sin pedir confirmación, hasta las 11:30.
+
+## Política de API Versionless (2026-11-25)
+Las API de este repositorio son **Versionless**: no se pone `v1` ni similares en las URL ni en los nombres de paquete, y se evoluciona solo añadiendo, sin romper la compatibilidad. Los campos solo se añaden, los campos nuevos son opcionales y los campos desconocidos se ignoran. Para cambiar un nombre se añade el nuevo y se marca el antiguo como obsoleto (el plazo por defecto es de 6 meses o más, y solo se elimina tras confirmar que no se usa en absoluto). Los enum admiten valores desconocidos. Las correcciones urgentes de seguridad son la excepción. Los nombres `.v1` existentes se conservan por ahora para no romper a quien los llama; se añade un alias sin versión y `.v1` se retira por etapas. Detalles y fuentes: al final de [`runo/API-POLICY.md`](https://github.com/aon-co-jp/runo/blob/main/API-POLICY.md). La aplicación se hará paso a paso a partir de ahora.
+
+## Política de API: abolir REST y pasar a gRPC / Connect
+Este repositorio **no crea nuevas API REST**. Las API que se llaman desde el navegador o con `curl` usan **llamadas simples de Connect** (`POST /<paquete>.<Service>/<Method>`, `content-type: application/json`); entre servicios se usa **gRPC / gRPC-web**. GraphQL es de solo lectura. El REST existente se migra cuando se toca, y una vez migrado se elimina la ruta antigua. El JSON se lee con RS-JSON (`from_str_secure` / `parse_secure`). Las únicas excepciones son los casos en que el estándar de la otra parte fija la forma (ACME, callbacks de OAuth/OIDC, webhooks de terceros, comprobaciones de estado, archivos estáticos y OTLP). Si hay dudas, Connect. Fuente de verdad: [`runo/API-POLICY.md`](https://github.com/aon-co-jp/runo/blob/main/API-POLICY.md).

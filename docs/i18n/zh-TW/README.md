@@ -1,4 +1,4 @@
-> 說明：儲存庫根目錄的日文 README.md 是原文。本文用簡單易懂的話寫成，由 AI 翻譯，並經 AI 依母語水準審校語句是否自然；尚未經真人母語人士審閱。
+> 說明：儲存庫根目錄的日文 README.md 是原文。本文用簡單易懂的話寫成，由 AI 翻譯，並經 AI 依母語水準審校語句是否自然；尚未經真人母語人士確認。
 
 # pl2pl
 
@@ -71,6 +71,24 @@ pl2pl ir ./project --out ./out --format openapi
 - Java(`converters/java_to`):支援方法參照、`Comparator`、`Collectors` 和匿名類別(保留每一個方法)。Rust 端支援 List 操作(`Vec`、`push`、索引存取、`for`),產生的 Rust 在 spring、jaxrs、servlet、spark 四種框架下都通過了 `cargo check`。
 - 在 Spring PetClinic REST(以 OpenAPI 為起點的專案)上的試驗:找到的路由從 1 條增加到 37 條;產生的 Python 語法錯誤為 0;衍生查詢(`Or`、`Like`、比較、`OrderBy` 等)可在記憶體儲存庫上執行;應用程式可以匯入(41 條路由);`this.field` 的名稱已統一,呼叫能依序經過控制器 → 服務 → 儲存庫。
 - 尚未完成:儲存庫與 MapStruct 對應器的產生(呼叫會停在 `TODO`)、真實資料庫、真正執行產生的 FastAPI、CICS 的畫面對應與檔案、含 Map 或 Stream 的 Rust 函式本體。pl2pl 測試:55 項通過。
+
+## 2026-11-25 現況與未完成事項
+
+現況：這是把舊程式（COBOL、C、C++、Fortran、Java 等）改寫成你所選語言和框架的工具。最近納入了 Java_to 對 PetClinic 的支援（ResponseEntity、Mapper、父層資料類別），並同步了多語言文件。尚未完成：在實體 Mac 和 iPhone 上確認（這裡沒有實機）。翻譯：日文與英文以外的語言皆為 AI 翻譯，尚未經母語人士確認。
+
+<!-- directive-20261125-1130 -->
+## 2026-11-25 指示（11:30 前不需確認）
+
+到 2026-11-25 11:30 為止，未完成的事項不必確認，自動做到完成。即使判斷需求很少、必要性不高，或是得從頭大規模重做，也不要改用別的方式敷衍，而是正面重做。同時開發的對象：COBOL_to、Java_to、MFastAPI、2MFastAPI（把其他語言和框架轉成與 MFastAPI 相容的程式碼；Node.js 和 TypeScript 是例外，可以選用，也可以都不選）、RMojo、RPoRea（RPoem 與 Reaxt 的整合）、2RPoRea（把其他語言和框架轉成 RPoRea）、Reaxt（React + Next.js + Nuxt.js + Nest.js 的整合）。改動其中一項時，要檢查其他項目，並在同一天以日文和英文更新 README、CLAUDE、PORTING 和 POLICY。
+
+<!-- directive-20261125-mojo -->
+## 2026-11-25 補充：MFastAPI 必須能從 Mojo 使用
+
+MFastAPI 要維持**可從 Mojo 使用的規格**（Python 語法、Rust 實作、支援 Mojo；在 Windows 上，透過 RMojo 的 `compat/wsl-bridge` 使用 WSL 中的 Mojo）。2MFastAPI 的轉換結果也必須能從 Mojo 使用。現況：`mojo/` 是參考實作，階段 B、C 的伺服器仍屬實驗性質。從 Mojo 呼叫的實機確認，只有實際確認過的範圍才能寫成「已確認」。到 11:30 為止不需確認，自動進行。
+
+## 2026-11-25 補充：c2rust 支援陣列與 break/continue
+
+`pl2pl c2rust` 現在支援固定長度的陣列（`int a[8] = {...};`、`double w[4];`，初始值不足的部分補 0）、以索引讀寫（`a[j + 1]` → `a[(j + 1) as usize]`）、`break;`、`continue;`，以及 `while (1)` → `loop`。我們用 WSL 的 gcc 和 rustc 執行了一個包含氣泡排序和 `while (1)` 的範例，輸出完全一致（`1 2 3 4 5 7 8 9` / `6.00 12.00 9`）。單元測試 56 項通過。尚未支援：指標、結構、二維陣列、把陣列傳給函式，以及整數與小數的隱含型別轉換（`k * 1.5` 必須寫成 `(double)k`）。
 
 ## 了解更多
 [LANGUAGES.md](../../LANGUAGES.md)(語言清單) / [COMBINATIONS.md](../../COMBINATIONS.md)(組合) / [DESIGN.md](../../DESIGN.md)(設計，由擁有者撰寫) / [components/README.md](../../../components/README.md)(附帶的元件)。這些檔案為日文。

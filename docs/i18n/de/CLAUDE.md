@@ -28,3 +28,33 @@
 - Java (`converters/java_to`): Methodenreferenzen, `Comparator`, `Collectors` und anonyme Klassen (alle Methoden bleiben erhalten). Auf der Rust-Seite funktionieren List-Operationen (`Vec`, `push`, Indexzugriff, `for`); das erzeugte Rust besteht `cargo check` für spring, jaxrs, servlet und spark.
 - Versuch mit Spring PetClinic REST (ein Projekt, das von OpenAPI ausgeht): Die gefundenen Routen stiegen von 1 auf 37; das erzeugte Python hat 0 Syntaxfehler; abgeleitete Abfragen (`Or`, `Like`, Vergleiche, `OrderBy` usw.) laufen auf einem Speicher-Repository; die App lässt sich importieren (41 Routen); die Namen von `this.field` stimmen jetzt überein, sodass ein Aufruf Controller → Service → Repository durchläuft.
 - Noch offen: Erzeugung von Repository und MapStruct-Mapper (Aufrufe bleiben an einem `TODO` stehen), eine echte Datenbank, ein echter Lauf des erzeugten FastAPI, CICS-Masken und -Dateien sowie Rust-Rümpfe mit Map oder Stream. pl2pl-Tests: 55 bestanden.
+
+## 2026-11-25 Stand und offene Punkte
+
+Stand: ein Werkzeug, das alte Programme (COBOL, C, C++, Fortran, Java u. a.) in die gewählte Sprache und das gewählte Framework umschreibt. Zuletzt wurde die PetClinic-Unterstützung von Java_to (ResponseEntity, Mapper, übergeordnete Datenklassen) übernommen und die mehrsprachige Dokumentation abgeglichen. Offen: Prüfung auf einem echten Mac und iPhone (solche Geräte haben wir hier nicht). Übersetzungen: KI-übersetzt (außer Japanisch und Englisch), noch nicht von Muttersprachlern geprüft.
+
+## 2026-11-25 Nachtrag: Abgleich der Konverter
+
+In `converters/cobol_to` wurde von COBOL_to das Umsetzen von EXEC CICS LINK/XCTL in CALL übernommen (`7d67bbf`), in `converters/java_to` von Java_to der ternäre Operator (in Rust-Rümpfen, `e9ac300`). Tests: Java_to 39, COBOL_to 25, pl2pl 55, alle bestanden. Offen: echte Mac- und iPhone-Geräte sowie der Start des erzeugten FastAPI mit einer echten Datenbank.
+
+## 2026-11-25 Nachtrag: Auswahl bei mehreren Implementierungen per Test festgeschrieben
+
+Hat eine Repository-Schnittstelle mehrere Implementierungen, bevorzugt der Generator eine, die im Speicher läuft (ohne Jdbc oder Jpa im Namen), und nimmt sonst die erste; das war bereits umgesetzt (der frühere Hinweis „nicht unterstützt“ war veraltet). Jetzt ist es durch den Unit-Test `multiple_impls_prefer_non_db_one` festgeschrieben (Java_to: 40 bestanden). Offen: komplexe MapStruct-Mapper und der Start mit einer echten Datenbank.
+
+## 2026-11-25 Nachtrag: MapStruct-@Mapping unterstützt
+
+`@Mapping(target=..., source="a.b")` (verschachtelte Quellattribute), `ignore=true` und `constant="..."` an Mapper-Methoden werden jetzt an das erzeugte Python `MapperBase._to(cls, src, rename, ignore, const)` weitergegeben. Abgedeckt durch den Unit-Test `mapstruct_mapping_annotations` (Java_to: 41 bestanden) und eine Prüfung zur Laufzeit (`owner.name` zu `fullName`, ignore, Konstante). Offen: die verschachtelte Schreibweise `@Mappings({...})`, `expression=`, `@MappingTarget` und der Start mit einer echten Datenbank.
+
+<!-- directive-20261125-1130 -->
+## 2026-11-25 Anweisung (bis 11:30 keine Rückfrage nötig)
+Bis 2026-11-25 11:30 wird Unerledigtes ohne Rückfrage automatisch bis zur Fertigstellung vorangetrieben. Auch wenn die Nachfrage gering oder die Notwendigkeit niedrig erscheint oder alles von Grund auf neu gebaut werden müsste, weichen wir nicht auf ein anderes Verfahren aus, sondern bauen es richtig neu. Gemeinsam entwickelt werden: COBOL_to, Java_to, MFastAPI, 2MFastAPI (von anderen Sprachen und Frameworks zu MFastAPI-kompatiblem Code; Node.js und TypeScript sind eine optionale Ausnahme, und man kann auch beides nicht wählen), RMojo, RPoRea (Integration von RPoem und Reaxt), 2RPoRea (von anderen Sprachen und Frameworks zu RPoRea) und Reaxt (Integration von React, Next.js, Nuxt.js und Nest.js). Ändert sich eines davon, werden die anderen geprüft, und README, CLAUDE, PORTING und POLICY werden am selben Tag auf Japanisch und Englisch aktualisiert.
+
+<!-- directive-20261125-mojo -->
+## 2026-11-25 Nachtrag: MFastAPI muss aus Mojo nutzbar sein
+MFastAPI behält die **Vorgabe, aus Mojo nutzbar zu sein** (Python-Syntax, Rust-Implementierung, Mojo-Unterstützung; unter Windows wird das echte Mojo in WSL über `compat/wsl-bridge` von RMojo angesteuert). Auch das Ergebnis von 2MFastAPI muss aus Mojo nutzbar sein. Aktueller Stand: `mojo/` ist eine Referenzimplementierung, und die Server der Stufen B und C sind experimentell. Als „geprüft“ bezeichnen wir nur, was wirklich ausgeführt wurde. Bis 11:30 geht es ohne Rückfrage automatisch weiter.
+
+## Versionless-API-Richtlinie (2026-11-25)
+Die APIs dieses Repositorys sind **Versionless**: keine `v1` o. Ä. in URLs oder Paketnamen; sie entwickeln sich nur durch Hinzufügen weiter, ohne die Kompatibilität zu brechen. Felder werden nur hinzugefügt, neue Felder sind optional, unbekannte Felder werden ignoriert, und eine Umbenennung geschieht, indem man den neuen Namen hinzufügt und den alten als veraltet kennzeichnet (Frist standardmäßig mindestens 6 Monate; gelöscht wird erst, wenn nachweislich nichts mehr den alten Namen nutzt). Enums müssen unbekannte Werte tolerieren. Ausnahme sind dringende Sicherheitskorrekturen. Bestehende `.v1`-Namen bleiben vorerst, damit Aufrufer nicht brechen; es wird ein versionsloser Alias hinzugefügt, und `.v1` wird schrittweise abgeschafft. Einzelheiten und Quellen: am Ende von [`runo/API-POLICY.md`](https://github.com/aon-co-jp/runo/blob/main/API-POLICY.md). Die Anwendung folgt der Reihe nach.
+
+## API-Richtlinie: REST abschaffen, auf gRPC / Connect umstellen
+Dieses Repository legt **keine neuen REST-APIs** an. APIs, die vom Browser oder mit `curl` aufgerufen werden, nutzen **einfache Connect-Aufrufe** (`POST /<Paket>.<Service>/<Methode>`, `content-type: application/json`); zwischen Diensten wird **gRPC / gRPC-web** verwendet. GraphQL ist nur lesend. Bestehendes REST wird umgestellt, sobald man es anfasst, und die alte Route wird danach entfernt. JSON wird mit RS-JSON gelesen (`from_str_secure` / `parse_secure`). Ausnahmen sind nur Formen, die ein fremder Standard vorgibt (ACME, OAuth/OIDC-Callbacks, Webhooks von Dritten, Health-Checks, statische Dateien, OTLP). Im Zweifel Connect. Maßgebliche Quelle: [`runo/API-POLICY.md`](https://github.com/aon-co-jp/runo/blob/main/API-POLICY.md).

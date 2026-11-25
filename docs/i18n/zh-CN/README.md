@@ -1,4 +1,4 @@
-> 说明：仓库根目录的日文 README.md 是原文。本文用简单易懂的话写成，由 AI 翻译，并经 AI 按母语水平审校语言是否自然；尚未经真人母语者审校。
+> 说明：仓库根目录的日文 README.md 是原文。本文用简单易懂的话写成，由 AI 翻译，并经 AI 按母语水平审校语言是否自然；尚未经真人母语者（母语为简体中文的人）审校，可能仍有不自然之处。
 
 # pl2pl
 
@@ -71,6 +71,22 @@ pl2pl ir ./project --out ./out --format openapi
 - Java(`converters/java_to`):支持方法引用、`Comparator`、`Collectors` 和匿名类(保留每一个方法)。Rust 一侧支持 List 操作(`Vec`、`push`、下标访问、`for`),生成的 Rust 在 spring、jaxrs、servlet、spark 四种框架下都通过了 `cargo check`。
 - 在 Spring PetClinic REST(以 OpenAPI 为起点的项目)上的试验:找到的路由从 1 条增加到 37 条;生成的 Python 语法错误为 0;派生查询(`Or`、`Like`、比较、`OrderBy` 等)可在内存仓库上运行;应用可以导入(41 条路由);`this.field` 的名称已统一,调用能依次经过控制器 → 服务 → 仓库。
 - 尚未完成:仓库与 MapStruct 映射器的生成(调用会停在 `TODO`)、真实数据库、真正运行生成的 FastAPI、CICS 的画面映射与文件、含 Map 或 Stream 的 Rust 函数体。pl2pl 测试:55 项通过。
+
+## 2026-11-25 现状与未完成事项
+
+现状：这是一个把旧程序（COBOL、C、C++、Fortran、Java 等）改写成你所选语言和框架的工具。最近并入了 Java_to 对 PetClinic 的支持（ResponseEntity、Mapper、父数据类），并同步了多语言文档。待办：在真实的 Mac 和 iPhone 上验证（这里没有这些设备）。翻译：由 AI 翻译并经 AI 审校，尚未经母语者确认。
+
+<!-- directive-20261125-1130 -->
+## 2026-11-25 指示（11:30 前无需确认）
+2026-11-25 11:30 之前，未完成的事项不必确认，自动做到完成。即使判断需求少、必要性低，或者需要从头大规模重做，也不要用别的办法糊弄，而要正面重做。同时开发的对象：COBOL_to、Java_to、MFastAPI、2MFastAPI（把其他语言和框架转换为兼容 MFastAPI 的代码；Node.js 和 TypeScript 可作为例外选用，也可以不选）、RMojo、RPoRea（RPoem 与 Reaxt 的整合）、2RPoRea（把其他语言和框架转换为 RPoRea）、Reaxt（React + Next.js + Nuxt.js + Nest.js 的整合）。改动其中一个，就要检查其他的，并在同一天用日文和英文更新 README、CLAUDE、PORTING 和 POLICY。
+
+<!-- directive-20261125-mojo -->
+## 2026-11-25 补充：MFastAPI 必须能在 Mojo 中使用
+MFastAPI 要一直保持**可在 Mojo 中使用的规格**（Python 语法、Rust 实现、支持 Mojo；在 Windows 上，通过 RMojo 的 `compat/wsl-bridge` 使用 WSL 里的 Mojo）。2MFastAPI 的转换结果也必须能在 Mojo 中使用。现状：`mojo/` 是参考实现，阶段 B、C 的服务器还是实验性的。从 Mojo 调用的真机确认，只把实际确认过的范围写成“已确认”。11:30 之前不必确认，自动推进。
+
+## 2026-11-25 补充：c2rust 支持数组与 break/continue
+
+`pl2pl c2rust` 现在支持定长数组（`int a[8] = {...};`、`double w[4];`，初始值不足的部分用 0 补齐）、下标的读写（`a[j + 1]` → `a[(j + 1) as usize]`）、`break;`、`continue;`，以及 `while (1)` → `loop`。我们把含冒泡排序和 `while (1)` 的示例，用 WSL 里的 gcc 和 rustc 分别运行，输出完全一致（`1 2 3 4 5 7 8 9` / `6.00 12.00 9`）。单元测试 56 项通过。尚不支持：指针、结构体、二维数组、把数组传给函数，以及整数与小数之间的隐式类型转换（`k * 1.5` 必须写成 `(double)k`）。
 
 ## 了解更多
 [LANGUAGES.md](../../LANGUAGES.md)(语言清单) / [COMBINATIONS.md](../../COMBINATIONS.md)(组合) / [DESIGN.md](../../DESIGN.md)(设计，由所有者撰写) / [components/README.md](../../../components/README.md)(附带的组件)。这些文件为日文。

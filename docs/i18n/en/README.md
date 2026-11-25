@@ -1,4 +1,4 @@
-> Note: the Japanese README in the repository root is the original. This English version was rewritten in plain words so that anyone, even a child, can follow it.
+> Note: the Japanese README.md in the repository root is the original. This English version uses plain words. It was translated by AI and then reviewed by AI for natural English. A human native speaker has not checked it yet.
 
 # pl2pl
 
@@ -71,6 +71,24 @@ pl2pl ir ./project --out ./out --format openapi
 - Java (`converters/java_to`): method references, `Comparator`, `Collectors`, and anonymous classes (every method is kept). On the Rust side, List operations (`Vec`, `push`, index access, `for`) work, and the generated Rust passes `cargo check` for spring, jaxrs, servlet and spark.
 - Trial on Spring PetClinic REST (a project that starts from OpenAPI): routes found went from 1 to 37; the generated Python has 0 syntax errors; derived queries (`Or`, `Like`, comparisons, `OrderBy` and so on) run on an in-memory repository; the app can be imported (41 routes); and `this.field` names now match, so a call goes controller → service → repository.
 - Still open: repository and MapStruct mapper generation (calls stop at a `TODO`), a real database, a real run of the generated FastAPI, CICS maps and files, and Rust bodies with Map or Stream. pl2pl tests: 55 pass.
+
+## 2026-11-25 Status and open items
+
+Status: a tool that rewrites old programs (COBOL, C, C++, Fortran, Java and more) into the language and framework you choose. Recently it took in Java_to's PetClinic support (ResponseEntity, Mapper, parent data classes), and the translated docs were synced. Open: checks on a real Mac and iPhone (we have no such devices here). Translations: AI-translated (other than ja/en); not yet checked by native speakers.
+
+<!-- directive-20261125-1130 -->
+## 2026-11-25 Directive (no need to ask until 11:30)
+
+Until 2026-11-25 11:30, carry unfinished work through to completion automatically, without asking. Even if demand looks low, or a large rewrite from scratch is needed, do not use a different approach instead; do the real work. These are developed together: COBOL_to, Java_to, MFastAPI, 2MFastAPI (converts other languages and frameworks to MFastAPI-compatible code; Node.js and TypeScript are an optional exception, and choosing neither is allowed), RMojo, RPoRea (RPoem and Reaxt integrated), 2RPoRea (converts other languages and frameworks to RPoRea) and Reaxt (React + Next.js + Nuxt.js + Nest.js integrated). When one changes, check the others, and update README, CLAUDE, PORTING and POLICY in Japanese and English on the same day.
+
+<!-- directive-20261125-mojo -->
+## 2026-11-25 Addendum: MFastAPI must be usable from Mojo
+
+MFastAPI keeps the **specification of being usable from Mojo** (Python syntax, Rust core, Mojo support). On Windows, the real Mojo in WSL is driven through RMojo's `compat/wsl-bridge`. The output of 2MFastAPI must be usable from Mojo too. Current state: `mojo/` is a reference implementation, and its stage B and C servers are experimental. Only what was actually run is called "verified". Continue automatically without asking until 11:30.
+
+## 2026-11-25 Addendum: c2rust, arrays and break/continue
+
+`pl2pl c2rust` now handles fixed-size arrays (`int a[8] = {...};` and `double w[4];`; missing initial values are filled with 0), reading and writing by index (`a[j + 1]` becomes `a[(j + 1) as usize]`), `break;`, `continue;`, and `while (1)` as `loop`. A sample with bubble sort and `while (1)` was built with gcc and rustc in WSL, and the outputs match exactly (`1 2 3 4 5 7 8 9` / `6.00 12.00 9`). 56 unit tests pass. Not yet: pointers, structs, 2-D arrays, passing arrays to functions, and implicit conversion between int and float (`k * 1.5` must be written with `(double)k`).
 
 ## Learn more
 [LANGUAGES.md](../../LANGUAGES.md) (list of languages) / [COMBINATIONS.md](../../COMBINATIONS.md) (combinations) / [DESIGN.md](../../DESIGN.md) (the design, written by the owner) / [components/README.md](../../../components/README.md) (parts that come with it). These files are in Japanese.
