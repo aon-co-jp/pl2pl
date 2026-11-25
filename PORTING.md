@@ -478,3 +478,9 @@ Status: a tool that rewrites old programs (COBOL, C, C++, Fortran, Java and more
 **日本語**: `converters/cobol_to` に COBOL_to の EXEC CICS LINK/XCTL→CALL(`7d67bbf`)、`converters/java_to` に Java_to の三項演算子(Rust 本体、`e9ac300`)を取り込みました。試験: Java_to 39・COBOL_to 25・pl2pl 55、すべて成功。未了: Mac・iPhone 実機、生成した FastAPI の実 DB 起動確認。
 
 **English**: Synced `converters/cobol_to` with COBOL_to's EXEC CICS LINK/XCTL to CALL (`7d67bbf`) and `converters/java_to` with Java_to's ternary operator in Rust bodies (`e9ac300`). Tests: Java_to 39, COBOL_to 25, pl2pl 55, all pass. Open: real Mac/iPhone devices and starting generated FastAPI apps against a real DB.
+
+## 2026-11-25 追記: 実装が複数あるときの選び方を試験で固定 / Pinned implementation choice with a test
+
+**日本語**: リポジトリのインターフェースに実装が複数あるとき、メモリ上で動くもの(名前に Jdbc・Jpa を含まない)を優先し、無ければ先頭を選ぶ処理は実装済みでした(以前の「未対応」の記述は古い)。単体テスト `multiple_impls_prefer_non_db_one` で固定しました(Java_to 40件成功)。未了: MapStruct の複雑なマッパー、実 DB での起動確認。
+
+**English**: When a repository interface has several implementations, the generator already prefers one without Jdbc/Jpa in its name and otherwise takes the first (the earlier "unsupported" note was stale). It is now pinned by the unit test `multiple_impls_prefer_non_db_one` (Java_to: 40 pass). Open: complex MapStruct mappers and starting against a real DB.
