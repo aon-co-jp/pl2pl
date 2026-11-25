@@ -501,3 +501,9 @@ Situação: uma ferramenta que reescreve programas antigos (COBOL, C, C++, Fortr
 ## 2026-11-25 追記: MFastAPI は Mojo から使えること / Addendum: MFastAPI must be usable from Mojo
 **日本語**: MFastAPI は **Mojo から使用できる仕様**を保つ(Python 構文・Rust 実装・Mojo 対応、Windows では RMojo の `compat/wsl-bridge` 経由で WSL 上の Mojo を使う)。2MFastAPI の変換結果も Mojo から使えること。現状: `mojo/` は参照実装で、段階B・Cのサーバーは実験的。Mojo からの呼び出しの実機確認は、確認済みの範囲だけを「確認済み」と書く。11:30 まで確認なしで自動で進める。
 **English**: MFastAPI keeps the **specification of being usable from Mojo** (Python syntax, Rust core, Mojo support; on Windows the real Mojo in WSL is driven through RMojo's `compat/wsl-bridge`). Output of 2MFastAPI must be usable from Mojo too. Current state: `mojo/` is a reference implementation and its stage B/C servers are experimental. Only what was actually run is called "verified". Continue automatically without asking until 11:30.
+
+## 2026-11-25 追記: c2rust の配列・break/continue 対応 / c2rust: arrays, break/continue
+
+**日本語**: `pl2pl c2rust` が固定長の配列(`int a[8] = {...};`・`double w[4];`、足りない初期値は 0 で埋める)、添字の読み書き(`a[j + 1]` → `a[(j + 1) as usize]`)、`break;`・`continue;`、`while (1)` → `loop` に対応しました。泡立て並べ替えと `while (1)` を含むサンプルを WSL の gcc と rustc で動かし、出力が完全に一致しました(`1 2 3 4 5 7 8 9` / `6.00 12.00 9`)。単体テスト 56 件成功。まだ: ポインタ・構造体・2次元配列・配列を関数に渡すこと・整数と小数の暗黙の型変換(`k * 1.5` は `(double)k` と書く必要あり)。
+
+**English**: `pl2pl c2rust` now handles fixed-size arrays (`int a[8] = {...};`, `double w[4];`, missing initializers padded with 0), indexing for reads and writes (`a[j + 1]` becomes `a[(j + 1) as usize]`), `break;`, `continue;`, and `while (1)` as `loop`. A sample with bubble sort and `while (1)` was compiled with gcc and rustc in WSL and the outputs match exactly. 56 unit tests pass. Not yet: pointers, structs, 2-D arrays, passing arrays to functions, and implicit int/float conversion (`k * 1.5` must be written with `(double)k`).
