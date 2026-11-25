@@ -944,6 +944,25 @@ impl P {
         let w = |k: usize| up.get(k).map(|x| x.as_str()).unwrap_or("");
         match (w(0), w(1)) {
             ("RETURN", _) | ("ABEND", _) => Stmt::Stop,
+            ("LINK", _) | ("XCTL", _) => {
+                // PROGRAM('X') を CALL に、COMMAREA(x) を引数に。XCTL は制御が戻らないので、呼んだあと終了する
+                let q = |key: &str| {
+                    let f = up.iter().position(|x| x == key)?;
+                    if w(f + 1) == "(" { toks.get(f + 2).cloned() } else { None }
+                };
+                let prog = match q("PROGRAM") {
+                    Some(v) if v.starts_with('"') || v.starts_with('\'') => v.trim_matches(|c| c == '"' || c == '\'').to_string(),
+                    _ => return Stmt::Todo(format!("EXEC CICS {} の PROGRAM(...) が文字列でない(動的な指定)は未対応", w(0))),
+                };
+                let mut args = vec![];
+                if let Some(c) = q("COMMAREA") {
+                    let n = ident(&c);
+                    self.used.insert(n.clone());
+                    args.push(Expr::Var(n));
+                }
+                let call = Stmt::CallExt(prog, args);
+                if w(0) == "XCTL" { bundle(vec![call, Stmt::Stop]) } else { call }
+            }
             ("SEND", "TEXT") => {
                 // FROM ( 値 ) の値: 引用符つきなら文字列、そうでなければ変数
                 let f = up.iter().position(|x| x == "FROM");
@@ -958,7 +977,7 @@ impl P {
                     None => Stmt::Todo("EXEC CICS SEND TEXT に FROM(...) が無い".into()),
                 }
             }
-            _ => Stmt::Todo(format!("EXEC CICS {} は未対応(SEND TEXT / RETURN / ABEND のみ)", toks.iter().take(2).cloned().collect::<Vec<_>>().join(" "))),
+            _ => Stmt::Todo(format!("EXEC CICS {} は未対応(SEND TEXT / RETURN / ABEND / LINK / XCTL のみ)", toks.iter().take(2).cloned().collect::<Vec<_>>().join(" "))),
         }
     }
 
@@ -3857,9 +3876,22 @@ mod tests {
         assert!(py.contains("SQL_HANDLER") && !py.contains("TODO(COBOL_to)"), "{py}");
         assert!(to_rust(&p).contains("pub fn set_sql_handler"));
         // 対応しない形は黙って落とさず TODO に残す
-        let w = parse("       PROGRAM-ID. W.\n       PROCEDURE DIVISION.\n           EXEC CICS XCTL PROGRAM('X') END-EXEC.\n           STOP RUN.\n", false);
+        let w = parse("       PROGRAM-ID. W.\n       PROCEDURE DIVISION.\n           EXEC CICS SYNCPOINT END-EXEC.\n           STOP RUN.\n", false);
         let todos = w.stmts.iter().filter(|s| matches!(s, Stmt::Todo(_))).count();
         assert_eq!(todos, 1, "{:?}", w.stmts);
+        // LINK / XCTL は CALL へ(XCTL は呼んだあと終了、COMMAREA は引数)
+        let l = parse("       PROGRAM-ID. L.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 WS-C PIC X(4).
+       PROCEDURE DIVISION.
+           EXEC CICS LINK PROGRAM('SUB') COMMAREA(WS-C) END-EXEC.
+           EXEC CICS XCTL PROGRAM('NEXT') END-EXEC.
+           STOP RUN.
+", false);
+        let py = to_python(&l);
+        assert!(!py.contains("TODO(COBOL_to)"), "{py}");
+        assert!(py.to_lowercase().contains("sub"), "{py}");
     }
 
     #[test]

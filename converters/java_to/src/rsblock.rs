@@ -10,6 +10,18 @@ fn rs_expr(toks: &[Tok], vars: &[(String, String)], locals: &HashSet<String>) ->
     if toks.is_empty() {
         return None;
     }
+    // 三項演算子 `c ? a : b`(入れ子は右結合)
+    let q = crate::parse::split_top(toks, "?");
+    if q.len() == 2 {
+        let r = crate::parse::split_top(&toks[q[0].len() + 1..], ":");
+        if r.len() >= 2 {
+            let cond = rs_expr(&q[0], vars, locals)?;
+            let then = rs_expr(&r[0], vars, locals)?;
+            let rest = &toks[q[0].len() + 1 + r[0].len() + 1..];
+            let other = rs_expr(rest, vars, locals)?;
+            return Some(format!("(if {cond} {{ {then} }} else {{ {other} }})"));
+        }
+    }
     let parts = crate::parse::split_top(toks, "+");
     if parts.len() > 1 && parts.iter().any(|p| matches!(p.as_slice(), [Tok::Str(_)])) {
         let mut fmt = String::new();
@@ -295,6 +307,11 @@ mod tests {
         let r = run("int m = Math.max(n, 3); int l = Math.abs(m); return l;").unwrap();
         assert!(r.contains("(n).max(3)"));
         assert!(r.contains("(m).abs()"));
+    }
+    #[test]
+    fn ternary() {
+        let r = run("int m = n > 3 ? n : 3; return m;").unwrap();
+        assert!(r.contains("(if n > 3 { n } else { 3 })"), "{r}");
     }
     #[test]
     fn unsupported() {

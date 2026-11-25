@@ -472,3 +472,9 @@ Em palavras simples: leva programas antigos (COBOL, C, C++, Fortran) para a web 
 ### English
 
 Status: a tool that rewrites old programs (COBOL, C, C++, Fortran, Java and more) into the language and framework you choose. Recently it took in Java_to's PetClinic support (ResponseEntity, Mapper, parent data classes) and its translated docs were synced. Open: checks on a real Mac and iPhone (no such devices here). Translations: AI-translated (other than ja/en), not yet checked by native speakers.
+
+## 2026-11-25 追記: 変換器の同期 / Converter sync
+
+**日本語**: `converters/cobol_to` に COBOL_to の EXEC CICS LINK/XCTL→CALL(`7d67bbf`)、`converters/java_to` に Java_to の三項演算子(Rust 本体、`e9ac300`)を取り込みました。試験: Java_to 39・COBOL_to 25・pl2pl 55、すべて成功。未了: Mac・iPhone 実機、生成した FastAPI の実 DB 起動確認。
+
+**English**: Synced `converters/cobol_to` with COBOL_to's EXEC CICS LINK/XCTL to CALL (`7d67bbf`) and `converters/java_to` with Java_to's ternary operator in Rust bodies (`e9ac300`). Tests: Java_to 39, COBOL_to 25, pl2pl 55, all pass. Open: real Mac/iPhone devices and starting generated FastAPI apps against a real DB.
