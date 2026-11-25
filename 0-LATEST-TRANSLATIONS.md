@@ -20,8 +20,8 @@ Japanese and English are always the newest. Other languages are not translated e
 
 ## POLICY.md
 
-- 日本語 / ja: 2026-11-22 (latest)
-- English / en: 2026-11-22
+- 日本語 / ja: 2026-11-25 (latest)
+- English / en: 2026-11-22 (older than 2026-11-25)
 - 简体中文 / zh-Hans: not yet / まだ
 - 繁體中文 / zh-Hant: not yet / まだ
 - 한국어 / ko: not yet / まだ
