@@ -484,3 +484,9 @@ Status: a tool that rewrites old programs (COBOL, C, C++, Fortran, Java and more
 **日本語**: リポジトリのインターフェースに実装が複数あるとき、メモリ上で動くもの(名前に Jdbc・Jpa を含まない)を優先し、無ければ先頭を選ぶ処理は実装済みでした(以前の「未対応」の記述は古い)。単体テスト `multiple_impls_prefer_non_db_one` で固定しました(Java_to 40件成功)。未了: MapStruct の複雑なマッパー、実 DB での起動確認。
 
 **English**: When a repository interface has several implementations, the generator already prefers one without Jdbc/Jpa in its name and otherwise takes the first (the earlier "unsupported" note was stale). It is now pinned by the unit test `multiple_impls_prefer_non_db_one` (Java_to: 40 pass). Open: complex MapStruct mappers and starting against a real DB.
+
+## 2026-11-25 追記: MapStruct の @Mapping に対応 / MapStruct @Mapping support
+
+**日本語**: マッパーのメソッドに付けた `@Mapping(target=..., source="a.b")`(入れ子の元の属性)、`ignore=true`、`constant="..."` を、生成する Python の `MapperBase._to(cls, src, rename, ignore, const)` へ渡すようにしました。単体テスト `mapstruct_mapping_annotations`(Java_to 41件成功)と、実行時の動作確認(`owner.name`→`fullName`、ignore、定数)をしました。未了: `@Mappings({...})` の入れ子の書き方、`expression=`、`@MappingTarget`、実 DB での起動確認。
+
+**English**: Mapper methods' `@Mapping(target=..., source="a.b")` (nested source), `ignore=true` and `constant="..."` are now passed to the generated Python `MapperBase._to(cls, src, rename, ignore, const)`. Covered by the unit test `mapstruct_mapping_annotations` (Java_to: 41 pass) and a runtime check (`owner.name` to `fullName`, ignore, constant). Open: the nested `@Mappings({...})` form, `expression=`, `@MappingTarget`, and starting against a real DB.
