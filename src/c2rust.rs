@@ -309,7 +309,7 @@ fn toks(s: &str) -> Option<Vec<String>> {
                 continue;
             }
         }
-        if "+-*/%<>!&()[].,".contains(ch) {
+        if "+-*/%<>!&()[].,?:".contains(ch) {
             v.push(ch.to_string());
             i += 1;
             continue;
@@ -396,6 +396,31 @@ impl Px {
             self.i += 1;
             let r = self.expr(p + 1)?;
             l = bin(&op, l, r)?;
+        }
+        // 三項演算子 `c ? a : b`(数値どうし、または同じ型どうし)
+        if minp == 0 && self.peek() == Some("?") {
+            self.i += 1;
+            let a = self.expr(0)?;
+            if !self.eat(":") {
+                return None;
+            }
+            let b = self.expr(0)?;
+            let c = to_bool(&l.0, &l.1)?;
+            let t = if a.1 == b.1 {
+                a.1.clone()
+            } else if is_num(&a.1) && is_num(&b.1) {
+                if is_float(&a.1) || is_float(&b.1) {
+                    T::F64
+                } else if a.1 == T::I64 || b.1 == T::I64 {
+                    T::I64
+                } else {
+                    T::I32
+                }
+            } else {
+                return None;
+            };
+            let (x, y) = (coerce(&a.0, &a.1, &t)?, coerce(&b.0, &b.1, &t)?);
+            return Some((format!("(if {c} {{ {x} }} else {{ {y} }})"), t));
         }
         Some(l)
     }
@@ -942,8 +967,85 @@ fn strip_block_comments(src: &str) -> String {
     o
 }
 
+/// 引数つきマクロ `#define SQ(x) ((x)*(x))` を、呼び出し箇所へ文字列として展開する
+/// (引数は括弧で包む。定義の行は空行にして行番号を保つ。マクロの中で別のマクロは呼べるが、自己再帰は展開しない)。
+fn expand_fn_macros(src: &str) -> String {
+    let def = Regex::new(r"^\s*#define\s+(\w+)\(([^)]*)\)\s+(.+)$").unwrap();
+    let mut macros: Vec<(String, Vec<String>, String)> = vec![];
+    let mut lines: Vec<String> = vec![];
+    for l in src.lines() {
+        if let Some(c) = def.captures(l) {
+            let ps = c[2].split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
+            macros.push((c[1].to_string(), ps, c[3].trim().to_string()));
+            lines.push(String::new());
+        } else {
+            lines.push(l.to_string());
+        }
+    }
+    if macros.is_empty() {
+        return src.to_string();
+    }
+    let expand = |text: &str| -> String {
+        let mut s = text.to_string();
+        for _ in 0..6 {
+            let mut changed = false;
+            for (name, ps, body) in &macros {
+                let mut out = String::new();
+                let mut rest = s.as_str();
+                while let Some(pos) = rest.find(name.as_str()) {
+                    let before_ok = rest[..pos].chars().last().map_or(true, |c| !(c.is_alphanumeric() || c == '_'));
+                    let after = &rest[pos + name.len()..];
+                    if before_ok && after.starts_with('(') {
+                        // 対応する閉じ括弧を探す
+                        let (mut d, mut end) = (0i32, None);
+                        for (i, c) in after.char_indices() {
+                            if c == '(' {
+                                d += 1;
+                            } else if c == ')' {
+                                d -= 1;
+                                if d == 0 {
+                                    end = Some(i);
+                                    break;
+                                }
+                            }
+                        }
+                        if let Some(e) = end {
+                            let args = split_args(&after[1..e]);
+                            if args.len() == ps.len() {
+                                let mut b = body.clone();
+                                for (p, a) in ps.iter().zip(&args) {
+                                    let re = Regex::new(&format!(r"\b{}\b", regex::escape(p))).unwrap();
+                                    b = re.replace_all(&b, regex::NoExpand(&format!("({})", a.trim()))).to_string();
+                                }
+                                out.push_str(&rest[..pos]);
+                                out.push_str(&format!("({b})"));
+                                rest = &after[e + 1..];
+                                changed = true;
+                                continue;
+                            }
+                        }
+                    }
+                    out.push_str(&rest[..pos + name.len()]);
+                    rest = after;
+                }
+                out.push_str(rest);
+                s = out;
+            }
+            if !changed {
+                break;
+            }
+        }
+        s
+    };
+    let mut res = lines.iter().map(|l| expand(l)).collect::<Vec<_>>().join("\n");
+    if src.ends_with('\n') {
+        res.push('\n');
+    }
+    res
+}
+
 pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, String)> {
-    let src_owned = strip_block_comments(src);
+    let src_owned = expand_fn_macros(&strip_block_comments(src));
     let src: &str = &src_owned;
     let func = Regex::new(&format!(r"^({TYPES}|void)(?:\s+|\s*(\*)\s*)(\w+)\s*\(([^)]*)\)\s*\{{?\s*$")).unwrap();
     let multi = Regex::new(&format!(r"^({TYPES})\s+(.+);$")).unwrap();
@@ -1224,6 +1326,14 @@ mod tests {
         let mut r = vec![];
         let o = convert(s, "t.c", &mut r);
         (o[0].1.clone(), r)
+    }
+    #[test]
+    fn fn_macro_and_ternary() {
+        let (t, r) = conv("#define SQ(x) ((x) * (x))\nint main(void) {\n  int n = 3;\n  int m = n > 2 ? SQ(n) : 0; /* c */\n  printf(\"%x\\n\", m);\n  return 0;\n}\n");
+        assert!(t.contains("if n > 2"), "{t}");
+        assert!(t.contains("{:x}"), "{t}");
+        assert!(!t.contains("// TODO(c2rust):"), "{t}{r:?}");
+        assert!(!t.contains("SQ("), "{t}");
     }
     #[test]
     fn basic() {
