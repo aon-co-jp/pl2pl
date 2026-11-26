@@ -1279,8 +1279,46 @@ fn expand_enums(src: &str) -> String {
     out
 }
 
+/// `typedef struct [Tag] { ... } Name;` を `struct Name { ... };` に直し、型名 `Name`(と `struct Tag`)は `struct Name` と書く。
+fn expand_typedef_structs(src: &str) -> String {
+    let re = Regex::new(r"(?s)typedef\s+struct\s*(\w*)\s*\{(.*?)\}\s*(\w+)\s*;").unwrap();
+    let mut out = src.to_string();
+    let mut defs: Vec<String> = vec![];
+    let mut found: Vec<(String, String, String)> = vec![];
+    for c in re.captures_iter(src) {
+        found.push((c[1].to_string(), c[3].to_string(), c[2].to_string()));
+    }
+    for (k, c) in re.captures_iter(src).enumerate() {
+        out = out.replacen(c.get(0).unwrap().as_str(), &format!("\u{1}STRUCT{k}\u{1}"), 1);
+    }
+    for (tag, name, body) in &found {
+        let mut d = format!("struct {name} {{\n");
+        for f in body.split(';') {
+            if !f.trim().is_empty() {
+                d.push_str(&format!("{};\n", f.trim()));
+            }
+        }
+        d.push_str("};");
+        defs.push(d);
+    }
+    for (k, d) in defs.iter().enumerate() {
+        out = out.replace(&format!("\u{1}STRUCT{k}\u{1}"), d);
+    }
+    for (tag, name, _) in &found {
+        if !tag.is_empty() && tag != name {
+            if let Ok(r) = Regex::new(&format!(r"\bstruct\s+{}\b", regex::escape(tag))) {
+                out = r.replace_all(&out, format!("struct {name}").as_str()).into_owned();
+            }
+        }
+        if let Ok(r) = Regex::new(&format!(r"(struct\s+)?\b{}\b", regex::escape(name))) {
+            out = r.replace_all(&out, format!("struct {name}").as_str()).into_owned();
+        }
+    }
+    out
+}
+
 pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, String)> {
-    let src_owned = split_one_liners(&expand_enums(&expand_fn_macros(&strip_block_comments(src))));
+    let src_owned = split_one_liners(&expand_enums(&expand_typedef_structs(&expand_fn_macros(&strip_block_comments(src)))));
     let src: &str = &src_owned;
     let func = Regex::new(&format!(r"^({TYPES}|void)(?:\s+|\s*(\*)\s*)(\w+)\s*\(([^)]*)\)\s*\{{?\s*$")).unwrap();
     let multi = Regex::new(&format!(r"^({TYPES})\s+(.+);$")).unwrap();
