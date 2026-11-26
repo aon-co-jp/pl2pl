@@ -1222,8 +1222,65 @@ fn split_one_liners(src: &str) -> String {
 ")
 }
 
+/// `enum Color { RED, GREEN = 5, BLUE };`(と `typedef enum {...} Name;`)を、`#define` の定数に開き、
+/// `enum Color` / `Name` の型名は `int` に置き換える。値は整数だけ(式のものは開かず、そのまま残す)。
+fn expand_enums(src: &str) -> String {
+    let re = Regex::new(r"(?s)(typedef\s+)?enum\s*(\w*)\s*\{([^}]*)\}\s*(\w*)\s*;").unwrap();
+    let mut out = src.to_string();
+    let mut names: Vec<String> = vec![];
+    let mut defs = vec![];
+    for c in re.captures_iter(src) {
+        let mut next: i64 = 0;
+        let mut lines = vec![];
+        let mut ok = true;
+        for item in c[3].split(',') {
+            let it = item.trim();
+            if it.is_empty() {
+                continue;
+            }
+            let (nm, val) = match it.split_once('=') {
+                Some((n, v)) => match v.trim().parse::<i64>() {
+                    Ok(x) => (n.trim().to_string(), x),
+                    Err(_) => {
+                        ok = false;
+                        break;
+                    }
+                },
+                None => (it.to_string(), next),
+            };
+            if !nm.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
+                ok = false;
+                break;
+            }
+            lines.push(format!("#define {nm} {val}"));
+            next = val + 1;
+        }
+        if !ok || lines.is_empty() {
+            continue;
+        }
+        defs.push((c.get(0).unwrap().as_str().to_string(), lines.join("
+")));
+        if !c[2].is_empty() {
+            names.push(format!("enum {}", &c[2]));
+        }
+        if c.get(1).is_some() && !c[4].is_empty() {
+            names.push(c[4].to_string());
+        }
+    }
+    for (whole, repl) in defs {
+        out = out.replacen(&whole, &repl, 1);
+    }
+    for n in names {
+        let pat = if n.starts_with("enum ") { format!(r"\benum\s+{}\b", regex::escape(&n[5..])) } else { format!(r"\b{}\b", regex::escape(&n)) };
+        if let Ok(r) = Regex::new(&pat) {
+            out = r.replace_all(&out, "int").into_owned();
+        }
+    }
+    out
+}
+
 pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, String)> {
-    let src_owned = split_one_liners(&expand_fn_macros(&strip_block_comments(src)));
+    let src_owned = split_one_liners(&expand_enums(&expand_fn_macros(&strip_block_comments(src))));
     let src: &str = &src_owned;
     let func = Regex::new(&format!(r"^({TYPES}|void)(?:\s+|\s*(\*)\s*)(\w+)\s*\(([^)]*)\)\s*\{{?\s*$")).unwrap();
     let multi = Regex::new(&format!(r"^({TYPES})\s+(.+);$")).unwrap();
