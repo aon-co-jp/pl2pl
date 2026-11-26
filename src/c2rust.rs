@@ -288,7 +288,13 @@ fn toks(s: &str) -> Option<Vec<String>> {
                 }
             }
             let fl = n.contains('.') || n.contains('e') || n.contains('E') || n.ends_with('f') || n.ends_with('F');
+            let long_suffix = !fl && n.ends_with(|x: char| x == 'l' || x == 'L' || x == 'U' || x == 'u') && n.contains(|x: char| x == 'l' || x == 'L');
             n = n.trim_end_matches(|x: char| "fFlLuU".contains(x)).to_string();
+            let too_big = !fl && n.parse::<i64>().map(|x| x > i32::MAX as i64).unwrap_or(false);
+            if (long_suffix || too_big) && !fl {
+                v.push(format!("{n}i64")); // long の定数
+                continue;
+            }
             if fl {
                 if n.starts_with('.') {
                     n.insert(0, '0');
@@ -579,7 +585,8 @@ impl Px {
             return Some((f.to_string(), T::F64));
         }
         if tk.chars().next()?.is_ascii_digit() {
-            return Some((tk, T::I32));
+            let ty = if tk.ends_with("i64") { T::I64 } else { T::I32 };
+            return Some((tk, ty));
         }
         if let Some(body) = tk.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
             return Some((format!("(b\"{body}\\0\".as_ptr() as *mut u8)"), T::Raw(Box::new(T::Char))));
@@ -769,13 +776,16 @@ fn fmt(args: &str) -> Option<String> {
 
 /// カンマで分ける(括弧・波括弧・引用符の中は分けない)
 fn split_args(s: &str) -> Vec<String> {
-    let (mut v, mut d, mut q, mut cur) = (vec![], 0i32, false, String::new());
+    let (mut v, mut d, mut q, mut sq, mut cur) = (vec![], 0i32, false, false, String::new());
     let mut prev = ' ';
     for c in s.chars() {
-        if c == '"' && prev != '\\' {
+        if c == '"' && prev != '\\' && !sq {
             q = !q;
         }
-        if !q {
+        if c == '\'' && prev != '\\' && !q {
+            sq = !sq;
+        }
+        if !q && !sq {
             if c == '(' || c == '{' || c == '[' {
                 d += 1;
             }
@@ -1237,24 +1247,203 @@ fn split_one_liners(src: &str) -> String {
         }
         out.push(t.to_string());
     }
-    let mut out: Vec<String> = vec![];
-    let mut brace = 0i32;
-    for l in src.lines() {
-        let t = l.trim();
-        // 関数の外の `static`(ファイル内だけの変数・関数)は、1ファイルの変換では付けなくてよい
-        let l2: String = if brace == 0 && t.starts_with("static ") && !t.starts_with("static inline") { t["static ".len()..].to_string() } else { l.to_string() };
-        let l = l2.as_str();
-        let t = l.trim();
-        brace += l.matches('{').count() as i32 - l.matches('}').count() as i32;
-        if t.starts_with("else") && out.last().map(|x| x == "}").unwrap_or(false) {
-            out.pop();
-            one(&format!("}} {t}"), &mut out, 0);
+    fn net(t: &str) -> i32 {
+        let (mut q, mut esc, mut d) = (None::<char>, false, 0i32);
+        for ch in t.chars() {
+            if let Some(qc) = q {
+                if esc { esc = false } else if ch == '\\' { esc = true } else if ch == qc { q = None }
+                continue;
+            }
+            match ch {
+                '"' | '\'' => q = Some(ch),
+                '{' => d += 1,
+                '}' => d -= 1,
+                _ => {}
+            }
+        }
+        d
+    }
+    /// `for (...)`・`while (...)`・`if (...)`・`else if (...)`・`else` だけの行(本体が次の行から始まる)なら、その見出し
+    fn header_only(t: &str) -> Option<String> {
+        if t == "else" {
+            return Some("else".to_string());
+        }
+        for kw in ["for", "while", "if", "else if"] {
+            if let Some(r) = t.strip_prefix(kw) {
+                let r = r.trim_start();
+                if !r.starts_with('(') {
+                    continue;
+                }
+                let mut d = 0i32;
+                for (i, ch) in r.char_indices() {
+                    match ch {
+                        '(' => d += 1,
+                        ')' => {
+                            d -= 1;
+                            if d == 0 {
+                                return if i + 1 == r.len() { Some(format!("{kw} {r}")) } else { None };
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        None
+    }
+    /// k 行目から始まる「文 1 つ」の終わり(その次の行の番号)。波括弧の塊・見出しだけの行の本体・else の続きを含む
+    fn unit_end(lines: &[String], k: usize) -> usize {
+        if k >= lines.len() {
+            return lines.len();
+        }
+        let t = lines[k].trim();
+        let mut j;
+        if header_only(t).is_some() {
+            j = unit_end(lines, k + 1);
         } else {
-            one(l, &mut out, 0);
+            let n = net(t);
+            j = k + 1;
+            if n > 0 {
+                let mut d = n;
+                while j < lines.len() && d > 0 {
+                    d += net(&lines[j]);
+                    j += 1;
+                }
+            }
+        }
+        while j < lines.len() && lines[j].trim().starts_with("else") {
+            j = unit_end(lines, j);
+        }
+        j
+    }
+    fn split_top(s: &str, sep: char) -> Vec<String> {
+        let (mut v, mut cur, mut d, mut q, mut esc) = (vec![], String::new(), 0i32, None::<char>, false);
+        for ch in s.chars() {
+            if let Some(qc) = q {
+                cur.push(ch);
+                if esc { esc = false } else if ch == '\\' { esc = true } else if ch == qc { q = None }
+                continue;
+            }
+            match ch {
+                '"' | '\'' => {
+                    q = Some(ch);
+                    cur.push(ch);
+                }
+                '(' | '[' | '{' => {
+                    d += 1;
+                    cur.push(ch);
+                }
+                ')' | ']' | '}' => {
+                    d -= 1;
+                    cur.push(ch);
+                }
+                c if c == sep && d == 0 => {
+                    v.push(cur.trim().to_string());
+                    cur.clear();
+                }
+                _ => cur.push(ch),
+            }
+        }
+        v.push(cur.trim().to_string());
+        v
+    }
+    /// 一般形の `for (初期化; 条件; 更新)` を、`初期化; while (条件) { 本体; 更新; }` に開く。
+    /// 単純な形(`for (i = a; i < b; i++)`)は後の変換が Rust の for にするので、ここでは開かない。
+    /// 本体に `continue;` があるときは更新を飛ばしてしまうので開かない(false を返す)。
+    fn for_general(inner: &str, lines: &[String], bs: usize, be: usize, out: &mut Vec<String>, brace: &mut i32) -> bool {
+        let simple = Regex::new(r"^\s*(?:int|long)?\s*(\w+)\s*=\s*([^;]+);\s*(\w+)\s*(<=|<)\s*([^;]+);\s*(\w+)(\+\+|\s*\+=\s*1)\s*$").unwrap();
+        if simple.is_match(inner) {
+            return false;
+        }
+        let parts = split_top(inner, ';');
+        if parts.len() != 3 || lines[bs..be].iter().any(|l| l.contains("continue")) {
+            return false;
+        }
+        if !parts[0].is_empty() {
+            one(&format!("{};", parts[0]), out, 0);
+        }
+        let cond = if parts[1].is_empty() { "1" } else { parts[1].as_str() };
+        one(&format!("while ({cond}) {{"), out, 0);
+        proc_range(lines, bs, be, out, brace);
+        for st in split_top(&parts[2], ',') {
+            if !st.is_empty() {
+                one(&format!("{st};"), out, 0);
+            }
+        }
+        out.push("}".to_string());
+        true
+    }
+    fn proc_range(lines: &[String], a: usize, b: usize, out: &mut Vec<String>, brace: &mut i32) {
+        let mut k = a;
+        while k < b {
+            let raw = lines[k].as_str();
+            let t0 = raw.trim();
+            // 関数の外の `static`(ファイル内だけの変数・関数)は、1ファイルの変換では付けなくてよい
+            let l2: String = if *brace == 0 && t0.starts_with("static ") && !t0.starts_with("static inline") { t0["static ".len()..].to_string() } else { raw.to_string() };
+            let t = l2.trim();
+            if let Some(h) = header_only(t) {
+                let e = unit_end(lines, k + 1).min(b);
+                if let Some(inner) = h.strip_prefix("for").map(|r| r.trim()).and_then(|r| r.strip_prefix('(')).and_then(|r| r.strip_suffix(')')) {
+                    if !(k + 1 < b && lines[k + 1].trim() == "{") && for_general(inner, lines, k + 1, e, out, brace) {
+                        k = e;
+                        continue;
+                    }
+                }
+                let (hdr_end, next) = if k + 1 < b && lines[k + 1].trim() == "{" { (k + 2, true) } else { (k + 1, false) };
+                if next {
+                    // Allman 流儀: 見出しの次の行が `{` だけ
+                    if h.starts_with("else") && out.last().map(|x| x == "}").unwrap_or(false) {
+                        out.pop();
+                        one(&format!("}} {h} {{"), out, 0);
+                    } else {
+                        one(&format!("{h} {{"), out, 0);
+                    }
+                    *brace += 1;
+                    k = hdr_end;
+                    continue;
+                }
+                if h.starts_with("else") && out.last().map(|x| x == "}").unwrap_or(false) {
+                    out.pop();
+                    one(&format!("}} {h} {{"), out, 0);
+                } else {
+                    one(&format!("{h} {{"), out, 0);
+                }
+                proc_range(lines, k + 1, e, out, brace);
+                out.push("}".to_string());
+                k = e;
+                continue;
+            }
+            if t.starts_with("for") && t.ends_with('{') {
+                if let Some(inner) = t.strip_prefix("for").map(|r| r.trim()).and_then(|r| r.strip_prefix('(')).and_then(|r| r.strip_suffix('{')).map(|r| r.trim_end()).and_then(|r| r.strip_suffix(')')) {
+                    let e = unit_end(lines, k).min(b);
+                    if e >= k + 2 && lines[e - 1].trim() == "}" && net(t) == 1 && for_general(inner, lines, k + 1, e - 1, out, brace) {
+                        k = e;
+                        continue;
+                    }
+                }
+            }
+            *brace += net(t);
+            if k + 1 < b && lines[k + 1].trim() == "{" && !t.ends_with('{') && !t.is_empty() && !t.ends_with(';') {
+                // Allman 流儀の関数・見出し: `int main(void)` の次の行が `{` だけ
+                one(&format!("{t} {{"), out, 0);
+                *brace += 1;
+                k += 2;
+                continue;
+            }
+            if t.starts_with("else") && out.last().map(|x| x == "}").unwrap_or(false) {
+                out.pop();
+                one(&format!("}} {t}"), out, 0);
+            } else {
+                one(t, out, 0);
+            }
+            k += 1;
         }
     }
-    out.join("
-")
+    let lines: Vec<String> = src.lines().map(|s| s.to_string()).collect();
+    let mut out: Vec<String> = vec![];
+    let mut brace = 0i32;
+    proc_range(&lines, 0, lines.len(), &mut out, &mut brace);
+    out.join("\n")
 }
 
 /// `enum Color { RED, GREEN = 5, BLUE };`(と `typedef enum {...} Name;`)を、`#define` の定数に開き、
