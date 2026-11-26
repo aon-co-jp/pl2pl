@@ -641,7 +641,7 @@ fn fmt(args: &str) -> Option<String> {
     if !(f.starts_with('"') && f.ends_with('"') && f.len() >= 2) {
         return None;
     }
-    let spec = Regex::new(r"%(-?)(\d*)(\.\d+)?(?:ll|l|h)?([dfscui])|%%").unwrap();
+    let spec = Regex::new(r"%(-?)(\d*)(\.\d+)?(?:ll|l|h)?([dfscuixXo])|%%").unwrap();
     let body = &f[1..f.len() - 1];
     let esc = |x: &str| x.replace('{', "{{").replace('}', "}}");
     let (mut out, mut last, mut k, mut vals) = (String::new(), 0, 0, vec![]);
@@ -669,7 +669,13 @@ fn fmt(args: &str) -> Option<String> {
         });
         let (minus, w, pr) = (&c[1], &c[2], c.get(3).map(|x| x.as_str()).unwrap_or(""));
         let align = if !minus.is_empty() { "<" } else if !w.is_empty() && (letter == "s" || letter == "c") { ">" } else { "" };
-        let sp = format!("{align}{w}{pr}");
+        let ty = match letter {
+            "x" => "x",
+            "X" => "X",
+            "o" => "o",
+            _ => "",
+        };
+        let sp = format!("{align}{w}{pr}{ty}");
         out.push_str(&if sp.is_empty() { "{}".to_string() } else { format!("{{:{sp}}}") });
     }
     out.push_str(&esc(&body[last..]));
@@ -901,7 +907,44 @@ fn strip_comment(l: &str) -> &str {
     l
 }
 
+/// `/* ... */` を取り除く(文字列の中は残す。改行は保って行番号を変えない)。
+fn strip_block_comments(src: &str) -> String {
+    let b: Vec<char> = src.chars().collect();
+    let (mut o, mut i, mut q) = (String::new(), 0, false);
+    while i < b.len() {
+        let c = b[i];
+        if q {
+            o.push(c);
+            if c == '\\' && i + 1 < b.len() {
+                o.push(b[i + 1]);
+                i += 1;
+            } else if c == '"' {
+                q = false;
+            }
+        } else if c == '"' {
+            q = true;
+            o.push(c);
+        } else if c == '/' && i + 1 < b.len() && b[i + 1] == '*' {
+            i += 2;
+            while i + 1 < b.len() && !(b[i] == '*' && b[i + 1] == '/') {
+                if b[i] == '\n' {
+                    o.push('\n');
+                }
+                i += 1;
+            }
+            i += 1;
+            o.push(' ');
+        } else {
+            o.push(c);
+        }
+        i += 1;
+    }
+    o
+}
+
 pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, String)> {
+    let src_owned = strip_block_comments(src);
+    let src: &str = &src_owned;
     let func = Regex::new(&format!(r"^({TYPES}|void)(?:\s+|\s*(\*)\s*)(\w+)\s*\(([^)]*)\)\s*\{{?\s*$")).unwrap();
     let multi = Regex::new(&format!(r"^({TYPES})\s+(.+);$")).unwrap();
     let define = Regex::new(r"^#define\s+(\w+)\s+(.+)$").unwrap();
