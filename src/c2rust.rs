@@ -4,7 +4,11 @@
 //! 関数、printf、固定長の配列(1次元・2次元)、配列を関数に渡す(`int a[]` → `&mut [i32]`)、
 //! 単純な構造体(`struct P { int x; double y; };`、変数・初期化・配列・`.`/`->`)、
 //! 出力用のポインタ引数(`void f(int *x)` → `x: &mut i32`、呼び出し `f(&v)` → `f(&mut v)`)、break / continue。
-//! 未対応(TODO のまま): ポインタ変数・動的確保・文字列操作・マクロ・ファイル I/O。
+//! ポインタ変数(`int *p` → 生ポインタ `*mut i32`、読み書きは `unsafe`)、malloc/calloc/free、
+//! 文字列(`char s[N]`・`char *`、strlen/strcpy/strcat/strcmp/atoi、printf の %s・%c・幅指定)、
+//! `#define 名前 値`、ファイル入出力(fopen/fprintf/fputs/fgets/fclose)、`int a, b;` の複数宣言、
+//! sqrt などの数学関数、`f(a, a[0])` の借用エラー回避(引数を先に一時変数へ)。
+//! 未対応(TODO のまま): 関数形式のマクロ・ポインタのポインタ・scanf など。
 use regex::Regex;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -20,6 +24,10 @@ enum T {
     Slice(Box<T>),
     St(String),
     Ptr(Box<T>),
+    Char,
+    File,
+    Raw(Box<T>),
+    Null,
 }
 
 fn rs(t: &T) -> String {
@@ -33,12 +41,17 @@ fn rs(t: &T) -> String {
         T::Slice(e) => format!("&mut [{}]", rs(e)),
         T::St(s) => s.clone(),
         T::Ptr(e) => format!("&mut {}", rs(e)),
+        T::Char => "u8".into(),
+        T::File => "CFile".into(),
+        T::Raw(e) => format!("*mut {}", rs(e)),
+        T::Null => "*mut u8".into(),
     }
 }
 
 fn zero(t: &T) -> String {
     match t {
-        T::I32 | T::I64 => "0".into(),
+        T::I32 | T::I64 | T::Char => "0".into(),
+        T::Raw(_) | T::Null => "std::ptr::null_mut()".into(),
         T::F32 | T::F64 => "0.0".into(),
         T::Bool => "false".into(),
         T::Arr(e, n) => format!("[{}; {n}]", zero(e)),
@@ -57,6 +70,8 @@ fn base_ty(t: &str) -> Option<T> {
         "long" | "long long" => Some(T::I64),
         "double" => Some(T::F64),
         "float" => Some(T::F32),
+        "char" | "unsigned char" => Some(T::Char),
+        "FILE" => Some(T::File),
         _ => None,
     }
 }
@@ -65,13 +80,109 @@ fn is_float(t: &T) -> bool {
     matches!(t, T::F32 | T::F64)
 }
 fn is_num(t: &T) -> bool {
-    matches!(t, T::I32 | T::I64 | T::F32 | T::F64 | T::Bool)
+    matches!(t, T::I32 | T::I64 | T::F32 | T::F64 | T::Bool | T::Char)
+}
+fn is_int(t: &T) -> bool {
+    matches!(t, T::I32 | T::I64 | T::Char)
 }
 
 thread_local! {
     static VARS: RefCell<HashMap<String, T>> = Default::default();
     static STRUCTS: RefCell<HashMap<String, Vec<(String, T)>>> = Default::default();
     static FUNCS: RefCell<HashMap<String, (Vec<T>, Option<T>)>> = Default::default();
+    static ALIAS: RefCell<HashMap<String, String>> = Default::default();
+    static DEFINES: RefCell<HashMap<String, String>> = Default::default();
+    static UNSAFE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn mark() {
+    UNSAFE.with(|u| u.set(true));
+}
+fn take_unsafe() -> bool {
+    UNSAFE.with(|u| u.replace(false))
+}
+fn us(e: String) -> String {
+    if take_unsafe() { format!("unsafe {{ {e} }}") } else { e }
+}
+
+/// C の標準関数(文字列・メモリ・ファイル)を、出力の末尾に付ける小さな関数へ対応づける
+fn builtins() {
+    let c = || T::Raw(Box::new(T::Char));
+    let f = || T::Raw(Box::new(T::File));
+    let list: Vec<(&str, &str, Vec<T>, Option<T>)> = vec![
+        ("strlen", "c_strlen", vec![c()], Some(T::I32)),
+        ("strcpy", "c_strcpy", vec![c(), c()], Some(c())),
+        ("strcat", "c_strcat", vec![c(), c()], Some(c())),
+        ("strcmp", "c_strcmp", vec![c(), c()], Some(T::I32)),
+        ("atoi", "c_atoi", vec![c()], Some(T::I32)),
+        ("malloc", "c_malloc", vec![T::I32], Some(c())),
+        ("calloc", "c_calloc", vec![T::I32, T::I32], Some(c())),
+        ("free", "c_free", vec![c()], None),
+        ("fopen", "c_fopen", vec![c(), c()], Some(f())),
+        ("fclose", "c_fclose", vec![f()], Some(T::I32)),
+        ("fgets", "c_fgets", vec![c(), T::I32, f()], Some(c())),
+        ("fputs", "c_fputs_p", vec![c(), f()], Some(T::I32)),
+    ];
+    for (n, a, ps, r) in list {
+        FUNCS.with(|m| m.borrow_mut().insert(n.into(), (ps, r)));
+        ALIAS.with(|m| m.borrow_mut().insert(n.into(), a.into()));
+    }
+}
+
+/// 出力の末尾に付ける実行時の小さな関数(C の標準ライブラリの代わり)
+const RUNTIME: &str = r#"
+// ---- pl2pl c2rust の実行時関数(C の標準ライブラリの代わり) ----
+fn c_strlen(p: *mut u8) -> i32 { let mut n = 0; unsafe { while *p.add(n) != 0 { n += 1; } } n as i32 }
+fn c_strcpy(d: *mut u8, s: *mut u8) -> *mut u8 { unsafe { let mut i = 0; loop { let c = *s.add(i); *d.add(i) = c; if c == 0 { break; } i += 1; } } d }
+fn c_strcat(d: *mut u8, s: *mut u8) -> *mut u8 { let n = c_strlen(d) as usize; c_strcpy(d.wrapping_add(n), s); d }
+fn c_strcmp(a: *mut u8, b: *mut u8) -> i32 { unsafe { let mut i = 0; loop { let (x, y) = (*a.add(i), *b.add(i)); if x != y || x == 0 { return x as i32 - y as i32; } i += 1; } } }
+fn c_atoi(p: *mut u8) -> i32 { let s = c_str(p).trim_start(); let mut n: i32 = 0; let mut neg = false; for (k, c) in s.chars().enumerate() { if k == 0 && (c == '-' || c == '+') { neg = c == '-'; continue; } match c.to_digit(10) { Some(d) => n = n * 10 + d as i32, None => break } } if neg { -n } else { n } }
+fn c_str(p: *mut u8) -> &'static str { unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(p, c_strlen(p) as usize)) } }
+extern "C" { fn malloc(n: usize) -> *mut u8; fn calloc(n: usize, m: usize) -> *mut u8; fn free(p: *mut u8); }
+fn c_malloc(n: i32) -> *mut u8 { unsafe { malloc(n as usize) } }
+fn c_calloc(n: i32, m: i32) -> *mut u8 { unsafe { calloc(n as usize, m as usize) } }
+fn c_free(p: *mut u8) { unsafe { free(p) } }
+struct CFile { r: Option<std::io::BufReader<std::fs::File>>, w: Option<std::fs::File> }
+fn c_fopen(path: *mut u8, mode: *mut u8) -> *mut CFile {
+    let (p, m) = (c_str(path), c_str(mode));
+    let f = if m.starts_with('r') { std::fs::File::open(p).map(|f| CFile { r: Some(std::io::BufReader::new(f)), w: None }) }
+        else if m.starts_with('a') { std::fs::OpenOptions::new().append(true).create(true).open(p).map(|f| CFile { r: None, w: Some(f) }) }
+        else { std::fs::File::create(p).map(|f| CFile { r: None, w: Some(f) }) };
+    match f { Ok(c) => Box::into_raw(Box::new(c)), Err(_) => std::ptr::null_mut() }
+}
+fn c_fclose(f: *mut CFile) -> i32 { if !f.is_null() { unsafe { drop(Box::from_raw(f)); } } 0 }
+fn c_fputs(f: *mut CFile, s: &str) -> i32 { use std::io::Write; match unsafe { (*f).w.as_mut() } { Some(w) => { let _ = w.write_all(s.as_bytes()); 0 } None => -1 } }
+fn c_fputs_p(s: *mut u8, f: *mut CFile) -> i32 { c_fputs(f, c_str(s)) }
+fn c_fgets(buf: *mut u8, n: i32, f: *mut CFile) -> *mut u8 {
+    use std::io::BufRead;
+    let r = match unsafe { (*f).r.as_mut() } { Some(r) => r, None => return std::ptr::null_mut() };
+    let (mut k, max) = (0usize, (n - 1).max(0) as usize);
+    while k < max {
+        let b = match r.fill_buf() { Ok(b) if !b.is_empty() => b[0], _ => break };
+        r.consume(1);
+        unsafe { *buf.add(k) = b; }
+        k += 1;
+        if b == b'\n' { break; }
+    }
+    if k == 0 { return std::ptr::null_mut(); }
+    unsafe { *buf.add(k) = 0; }
+    buf
+}
+"#;
+
+/// C の文字列リテラル(引用符なし)の中身のバイト数(エスケープは1バイト)
+fn unescape_len(s: &str) -> usize {
+    let mut n = 0;
+    let mut it = s.chars();
+    while let Some(c) = it.next() {
+        if c == '\\' {
+            it.next();
+            n += 1;
+        } else {
+            n += c.len_utf8();
+        }
+    }
+    n
 }
 
 fn var(n: &str) -> Option<T> {
@@ -93,6 +204,17 @@ fn coerce(e: &str, from: &T, to: &T) -> Option<String> {
     if from == to {
         return Some(e.to_string());
     }
+    match (from, to) {
+        (T::Null, T::Raw(_)) => return Some("std::ptr::null_mut()".into()),
+        (T::Arr(a, _) | T::Slice(a), T::Raw(b)) if a == b => return Some(format!("{e}.as_mut_ptr()")),
+        (T::Ptr(a), T::Raw(b)) if a == b => return Some(format!("({e} as *mut {})", rs(b))),
+        (T::Raw(_), T::Raw(b)) => return Some(format!("({e} as *mut {})", rs(b))),
+        (T::Raw(a), T::Ptr(b)) if a == b => {
+            mark();
+            return Some(format!("&mut *{e}"));
+        }
+        _ => {}
+    }
     let e = if *from == T::Bool { format!("(({e}) as i32)") } else { e.to_string() };
     let from = if *from == T::Bool { &T::I32 } else { from };
     if from == to {
@@ -102,6 +224,7 @@ fn coerce(e: &str, from: &T, to: &T) -> Option<String> {
         (T::I32 | T::I64, T::F32 | T::F64) if is_lit_int(&e) => format!("{e}.0"),
         (T::F64, T::F32) if is_lit_float(&e) => e,
         (T::I32, T::I64) if is_lit_int(&e) => e,
+        (T::I32 | T::I64, T::Char) if is_lit_int(&e) => e,
         (a, b) if is_num(a) && is_num(b) && *b != T::Bool => format!("(({e}) as {})", rs(b)),
         _ => return None,
     })
@@ -111,7 +234,8 @@ fn to_bool(e: &str, t: &T) -> Option<String> {
     Some(match t {
         T::Bool => e.to_string(),
         T::F32 | T::F64 => format!("({e} != 0.0)"),
-        T::I32 | T::I64 => format!("({e} != 0)"),
+        T::I32 | T::I64 | T::Char => format!("({e} != 0)"),
+        T::Raw(_) => format!("!({e}).is_null()"),
         _ => return None,
     })
 }
@@ -151,6 +275,22 @@ fn toks(s: &str) -> Option<Vec<String>> {
             } else {
                 v.push(n);
             }
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            let st = i;
+            i += 1;
+            while i < c.len() && c[i] != ch {
+                if c[i] == '\\' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            if i >= c.len() {
+                return None;
+            }
+            i += 1;
+            v.push(c[st..i].iter().collect());
             continue;
         }
         if ch.is_alphabetic() || ch == '_' {
@@ -201,8 +341,27 @@ fn bin(op: &str, l: (String, T), r: (String, T)) -> Option<(String, T)> {
     if op == "&&" || op == "||" {
         return Some((format!("{} {op} {}", to_bool(&l.0, &l.1)?, to_bool(&r.0, &r.1)?), T::Bool));
     }
+    let isp = |t: &T| matches!(t, T::Raw(_) | T::Null);
+    if isp(&l.1) || isp(&r.1) {
+        return match (op, &l.1, &r.1) {
+            ("+" | "-", T::Raw(_), x) if is_int(x) => Some((format!("{}.wrapping_offset({}(({}) as isize))", l.0, if op == "-" { "-" } else { "" }, r.0), l.1.clone())),
+            ("+", x, T::Raw(_)) if is_int(x) => Some((format!("{}.wrapping_offset((({}) as isize))", r.0, l.0), r.1.clone())),
+            ("-", T::Raw(_), T::Raw(_)) => {
+                mark();
+                Some((format!("({}.offset_from({}) as i32)", l.0, r.0), T::I32))
+            }
+            ("==" | "!=", _, T::Null) => Some((format!("{}({}).is_null()", if op == "!=" { "!" } else { "" }, l.0), T::Bool)),
+            ("==" | "!=", T::Null, _) => Some((format!("{}({}).is_null()", if op == "!=" { "!" } else { "" }, r.0), T::Bool)),
+            ("==" | "!=" | "<" | ">" | "<=" | ">=", T::Raw(_), T::Raw(_)) => Some((format!("{} {op} {}", l.0, r.0), T::Bool)),
+            _ => None,
+        };
+    }
     if !is_num(&l.1) || !is_num(&r.1) {
         return None;
+    }
+    let cmp = matches!(op, "==" | "!=" | "<" | ">" | "<=" | ">=");
+    if l.1 == T::Char && r.1 == T::Char && cmp {
+        return Some((format!("{} {op} {}", l.0, r.0), T::Bool));
     }
     let target = if is_float(&l.1) || is_float(&r.1) {
         if l.1 == T::F64 || r.1 == T::F64 || !(is_float(&l.1) && is_float(&r.1)) { T::F64 } else { T::F32 }
@@ -212,7 +371,6 @@ fn bin(op: &str, l: (String, T), r: (String, T)) -> Option<(String, T)> {
         T::I32
     };
     let (a, b) = (coerce(&l.0, &l.1, &target)?, coerce(&r.0, &r.1, &target)?);
-    let cmp = matches!(op, "==" | "!=" | "<" | ">" | "<=" | ">=");
     Some((format!("{a} {op} {b}"), if cmp { T::Bool } else { target }))
 }
 
@@ -257,6 +415,10 @@ impl Px {
             let (e, t) = self.unary()?;
             return match t {
                 T::Ptr(inner) => Some((format!("*{e}"), *inner)),
+                T::Raw(inner) => {
+                    mark();
+                    Some((format!("(*{e})"), *inner))
+                }
                 _ => None,
             };
         }
@@ -277,7 +439,9 @@ impl Px {
                 self.i += 1;
             }
             if self.eat(")") {
-                if let Some(ct) = base_ty(&words.join(" ")).filter(is_num) {
+                let ptr = words.last().map(|w| w == "*").unwrap_or(false);
+                let ct = if ptr { base_ty(&words[..words.len() - 1].join(" ")).map(|b| T::Raw(Box::new(b))) } else { base_ty(&words.join(" ")).filter(is_num) };
+                if let Some(ct) = ct {
                     let (e, t) = self.unary()?;
                     return Some((coerce(&e, &t, &ct)?, ct));
                 }
@@ -294,6 +458,12 @@ impl Px {
                 if !self.eat("]") || !matches!(it, T::I32 | T::I64) {
                     return None;
                 }
+                if let T::Raw(el) = t {
+                    mark();
+                    e = format!("(*{e}.wrapping_offset(({ix}) as isize))");
+                    t = *el;
+                    continue;
+                }
                 t = match t {
                     T::Arr(el, _) | T::Slice(el) => *el,
                     _ => return None,
@@ -308,6 +478,14 @@ impl Px {
                     (T::St(s), false) => s.clone(),
                     (T::Ptr(b), true) => match &**b {
                         T::St(s) => s.clone(),
+                        _ => return None,
+                    },
+                    (T::Raw(b), true) => match &**b {
+                        T::St(s) => {
+                            mark();
+                            e = format!("(*{e})");
+                            s.clone()
+                        }
                         _ => return None,
                     },
                     _ => return None,
@@ -331,6 +509,62 @@ impl Px {
         }
         if tk.chars().next()?.is_ascii_digit() {
             return Some((tk, T::I32));
+        }
+        if let Some(body) = tk.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
+            return Some((format!("(b\"{body}\\0\".as_ptr() as *mut u8)"), T::Raw(Box::new(T::Char))));
+        }
+        if tk.starts_with('\'') {
+            return Some((format!("b{tk}"), T::Char));
+        }
+        if tk == "NULL" {
+            return Some(("std::ptr::null_mut()".into(), T::Null));
+        }
+        if tk == "sizeof" {
+            if !self.eat("(") {
+                return None;
+            }
+            let save = self.i;
+            let mut words = vec![];
+            while let Some(w) = self.peek() {
+                if w == ")" {
+                    break;
+                }
+                words.push(w.to_string());
+                self.i += 1;
+            }
+            let ptr = words.last().map(|w| w == "*").unwrap_or(false);
+            let bt = if ptr { base_ty(&words[..words.len() - 1].join(" ")).map(|b| T::Raw(Box::new(b))) } else { base_ty(&words.join(" ")) };
+            if let Some(bt) = bt {
+                if self.eat(")") {
+                    return Some((format!("(std::mem::size_of::<{}>() as i32)", rs(&bt)), T::I32));
+                }
+            }
+            self.i = save;
+            let (e, _) = self.expr(0)?;
+            return self.eat(")").then(|| (format!("(std::mem::size_of_val(&{e}) as i32)"), T::I32));
+        }
+        let math1 = ["sqrt", "fabs", "floor", "ceil", "sin", "cos", "tan", "exp", "log", "log10", "round"];
+        if (math1.contains(&tk.as_str()) || tk == "pow" || tk == "abs") && self.peek() == Some("(") && !FUNCS.with(|m| m.borrow().contains_key(&tk)) {
+            self.i += 1;
+            let a = self.expr(0)?;
+            if tk == "pow" {
+                if !self.eat(",") {
+                    return None;
+                }
+                let b = self.expr(0)?;
+                if !self.eat(")") {
+                    return None;
+                }
+                return Some((format!("f64::powf({}, {})", coerce(&a.0, &a.1, &T::F64)?, coerce(&b.0, &b.1, &T::F64)?), T::F64));
+            }
+            if !self.eat(")") {
+                return None;
+            }
+            if tk == "abs" {
+                return Some((format!("i32::abs({})", coerce(&a.0, &a.1, &T::I32)?), T::I32));
+            }
+            let m = if tk == "fabs" { "abs" } else { tk.as_str() };
+            return Some((format!("f64::{m}({})", coerce(&a.0, &a.1, &T::F64)?), T::F64));
         }
         if !(tk.chars().next()?.is_alphabetic() || tk.starts_with('_')) {
             return None;
@@ -360,7 +594,24 @@ impl Px {
             if args.len() != ps.len() {
                 return None;
             }
-            return Some((format!("{tk}({})", args.join(", ")), ret.unwrap_or(T::I32)));
+            let fname = ALIAS.with(|m| m.borrow().get(&tk).cloned()).unwrap_or(tk.clone());
+            // `f(&mut a, a[0])` は Rust の借用の規則で通らないので、ほかの引数を先に一時変数へ移す
+            if args.iter().any(|a| a.starts_with("&mut ")) && args.len() > 1 {
+                let mut pre = String::new();
+                let mut fin = vec![];
+                for (k, a) in args.iter().enumerate() {
+                    if a.starts_with("&mut ") || is_lit_int(a) || is_lit_float(a) {
+                        fin.push(a.clone());
+                    } else {
+                        pre.push_str(&format!("let _a{k} = {a}; "));
+                        fin.push(format!("_a{k}"));
+                    }
+                }
+                if !pre.is_empty() {
+                    return Some((format!("{{ {pre}{fname}({}) }}", fin.join(", ")), ret.unwrap_or(T::I32)));
+                }
+            }
+            return Some((format!("{fname}({})", args.join(", ")), ret.unwrap_or(T::I32)));
         }
         Some((tk.clone(), var(&tk)?))
     }
@@ -383,32 +634,48 @@ fn cond(s: &str) -> Option<String> {
     to_bool(&e, &t)
 }
 
-/// printf の書式を Rust の `{}` へ。
+/// printf の書式を Rust の `{}` へ(%d %f %s %c %u、幅・左寄せ・精度)。
 fn fmt(args: &str) -> Option<String> {
     let parts = split_args(args);
     let f = parts.first()?.trim();
     if !(f.starts_with('"') && f.ends_with('"') && f.len() >= 2) {
         return None;
     }
-    let spec = Regex::new(r"%(\.\d+)?(l|ll)?[dfsc]|%%|%(l|ll)?u").unwrap();
-    let mut n = 0;
+    let spec = Regex::new(r"%(-?)(\d*)(\.\d+)?(?:ll|l|h)?([dfscui])|%%").unwrap();
     let body = &f[1..f.len() - 1];
-    let out = spec.replace_all(body, |c: &regex::Captures| {
-        let m = &c[0];
-        if m == "%%" {
-            return "%".to_string();
+    let esc = |x: &str| x.replace('{', "{{").replace('}', "}}");
+    let (mut out, mut last, mut k, mut vals) = (String::new(), 0, 0, vec![]);
+    for c in spec.captures_iter(body) {
+        let m = c.get(0).unwrap();
+        out.push_str(&esc(&body[last..m.start()]));
+        last = m.end();
+        if m.as_str() == "%%" {
+            out.push('%');
+            continue;
         }
-        n += 1;
-        format!("\u{1}{}\u{3}", c.get(1).map(|p| p.as_str()).unwrap_or(""))
-    });
-    let esc = out.replace('{', "{{").replace('}', "}}");
-    let tmp = Regex::new("\u{1}([^\u{3}]*)\u{3}").unwrap().replace_all(&esc, |c: &regex::Captures| if c[1].is_empty() { "{}".to_string() } else { format!("{{:{}}}", &c[1]) }).to_string();
-    if n != parts.len() - 1 {
+        let a = parts.get(k + 1)?;
+        k += 1;
+        let (e, t) = ex(a.trim())?;
+        let letter = &c[4];
+        vals.push(match letter {
+            "s" => match &t {
+                T::Arr(el, _) | T::Slice(el) if **el == T::Char => format!("c_str({e}.as_mut_ptr())"),
+                T::Raw(el) if **el == T::Char => format!("c_str({e})"),
+                _ => return None,
+            },
+            "c" => format!("(({e}) as u8 as char)"),
+            _ => e,
+        });
+        let (minus, w, pr) = (&c[1], &c[2], c.get(3).map(|x| x.as_str()).unwrap_or(""));
+        let align = if !minus.is_empty() { "<" } else if !w.is_empty() && (letter == "s" || letter == "c") { ">" } else { "" };
+        let sp = format!("{align}{w}{pr}");
+        out.push_str(&if sp.is_empty() { "{}".to_string() } else { format!("{{:{sp}}}") });
+    }
+    out.push_str(&esc(&body[last..]));
+    if k != parts.len() - 1 {
         return None;
     }
-    let rest: Option<Vec<String>> = parts[1..].iter().map(|x| ex(x.trim()).map(|r| r.0)).collect();
-    let rest = rest?;
-    Some(if rest.is_empty() { format!("\"{tmp}\"") } else { format!("\"{tmp}\", {}", rest.join(", ")) })
+    Some(if vals.is_empty() { format!("\"{out}\"") } else { format!("\"{out}\", {}", vals.join(", ")) })
 }
 
 /// カンマで分ける(括弧・波括弧・引用符の中は分けない)
@@ -445,6 +712,14 @@ fn split_args(s: &str) -> Vec<String> {
 fn init(text: &str, t: &T) -> Option<String> {
     let s = text.trim();
     match t {
+        T::Arr(el, n) if **el == T::Char && s.starts_with('"') => {
+            let body = s.strip_prefix('"')?.strip_suffix('"')?;
+            let len = unescape_len(body);
+            if len > *n {
+                return None;
+            }
+            Some(format!("{{ let mut b = [0u8; {n}]; b[..{len}].copy_from_slice(b\"{body}\"); b }}"))
+        }
         T::Arr(el, n) if s.starts_with('{') => {
             let inner = s.strip_prefix('{')?.strip_suffix('}')?;
             let items: Vec<String> = split_args(inner).iter().map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect();
@@ -481,9 +756,22 @@ fn init(text: &str, t: &T) -> Option<String> {
     }
 }
 
-/// `[2][3]` を寸法の並びへ(空は None)
+/// `[2][3]`・`[N]`(#define)を寸法の並びへ(空は None)
 fn dims(s: &str) -> Option<Vec<Option<usize>>> {
-    Regex::new(r"\[\s*(\d*)\s*\]").unwrap().captures_iter(s).map(|c| if c[1].is_empty() { Some(None) } else { c[1].parse().ok().map(Some) }).collect()
+    Regex::new(r"\[\s*(\w*)\s*\]")
+        .unwrap()
+        .captures_iter(s)
+        .map(|c| {
+            let w = &c[1];
+            if w.is_empty() {
+                Some(None)
+            } else if let Ok(n) = w.parse() {
+                Some(Some(n))
+            } else {
+                DEFINES.with(|d| d.borrow().get(w).and_then(|v| v.trim().parse().ok())).map(Some)
+            }
+        })
+        .collect()
 }
 
 fn wrap(base: T, ds: &[Option<usize>]) -> Option<T> {
@@ -494,19 +782,19 @@ fn wrap(base: T, ds: &[Option<usize>]) -> Option<T> {
     Some(t)
 }
 
-const TYPES: &str = r"struct\s+\w+|long\s+long|unsigned\s+int|int|long|double|float|short|unsigned";
+const TYPES: &str = r"struct\s+\w+|long\s+long|unsigned\s+int|unsigned\s+char|int|long|double|float|short|unsigned|char|FILE";
 
 /// 関数の引数 1 つ: (名前, 型)
 fn param(p: &str) -> Option<(String, T)> {
-    let re = Regex::new(&format!(r"^({TYPES})\s*(\*?)\s*(\w+)((?:\s*\[\s*\d*\s*\])*)$")).unwrap();
+    let re = Regex::new(&format!(r"^({TYPES})(?:\s+|\s*(\*)\s*)(\w+)((?:\s*\[\s*\w*\s*\])*)$")).unwrap();
     let c = re.captures(p.trim())?;
     let b = base_ty(&c[1])?;
     let ds = dims(&c[4])?;
-    let t = if !c[2].is_empty() {
+    let t = if c.get(2).is_some() {
         if !ds.is_empty() {
             return None;
         }
-        T::Ptr(Box::new(b))
+        if matches!(b, T::Char | T::File) { T::Raw(Box::new(b)) } else { T::Ptr(Box::new(b)) }
     } else if ds.is_empty() {
         b
     } else {
@@ -556,14 +844,72 @@ fn assign(l: &str) -> Option<String> {
     Some(format!("{ls} = {};", coerce(&e, &t, &lt)?))
 }
 
+/// 宣言 1 つ(`int x = 1;`・`int *p = &v;`・`char s[] = "ab";`・`struct P ps[3];` など)
+fn decl_one(l: &str) -> Option<String> {
+    let re = Regex::new(&format!(r"^({TYPES})(?:\s+|\s*(\*)\s*)(\w+)((?:\s*\[\s*\w*\s*\])*)\s*(?:=\s*(.+))?;$")).unwrap();
+    let c = re.captures(l)?;
+    let mut b = base_ty(&c[1])?;
+    let mut ds = dims(&c[4])?;
+    let ix = c.get(5).map(|m| m.as_str().trim().to_string());
+    if c.get(2).is_some() {
+        if !ds.is_empty() {
+            return None;
+        }
+        b = T::Raw(Box::new(b));
+    } else if b == T::File {
+        return None;
+    }
+    if ds.first() == Some(&None) {
+        let it = ix.as_ref()?;
+        ds[0] = Some(match it.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
+            Some(q) => unescape_len(q) + 1,
+            None => split_args(it.strip_prefix('{')?.strip_suffix('}')?).iter().filter(|x| !x.trim().is_empty()).count(),
+        });
+    }
+    let t = wrap(b, &ds)?;
+    take_unsafe();
+    let v = match &ix {
+        Some(x) => init(x, &t)?,
+        None => zero(&t),
+    };
+    let v = us(v);
+    set_var(&c[3], t.clone());
+    Some(format!("let mut {}: {} = {v};", &c[3], rs(&t)))
+}
+
+/// `//` から後ろを捨てる(文字列の中の `//` は残す)
+fn strip_comment(l: &str) -> &str {
+    let b = l.as_bytes();
+    let mut q: u8 = 0;
+    let mut k = 0;
+    while k < b.len() {
+        let c = b[k];
+        if q != 0 {
+            if c == b'\\' {
+                k += 1;
+            } else if c == q {
+                q = 0;
+            }
+        } else if c == b'"' || c == b'\'' {
+            q = c;
+        } else if c == b'/' && k + 1 < b.len() && b[k + 1] == b'/' {
+            return &l[..k];
+        }
+        k += 1;
+    }
+    l
+}
+
 pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, String)> {
-    let func = Regex::new(&format!(r"^({TYPES}|void)\s+(\w+)\s*\(([^)]*)\)\s*\{{?\s*$")).unwrap();
-    let decl = Regex::new(&format!(r"^({TYPES})\s+(\w+)((?:\s*\[\s*\d*\s*\])*)\s*(?:=\s*(.+))?;$")).unwrap();
+    let func = Regex::new(&format!(r"^({TYPES}|void)(?:\s+|\s*(\*)\s*)(\w+)\s*\(([^)]*)\)\s*\{{?\s*$")).unwrap();
+    let multi = Regex::new(&format!(r"^({TYPES})\s+(.+);$")).unwrap();
+    let define = Regex::new(r"^#define\s+(\w+)\s+(.+)$").unwrap();
     let sdef = Regex::new(r"^struct\s+(\w+)\s*\{$").unwrap();
     let forl = Regex::new(r"^for\s*\(\s*(?:int|long)?\s*(\w+)\s*=\s*([^;]+);\s*(\w+)\s*(<=|<)\s*([^;]+);\s*(\w+)(\+\+|\s*\+=\s*1)\s*\)\s*\{$").unwrap();
     let ifl = Regex::new(r"^(\}\s*else\s+)?if\s*\((.*)\)\s*\{$").unwrap();
     let whl = Regex::new(r"^while\s*\((.*)\)\s*\{$").unwrap();
     let call = Regex::new(r"^(printf|puts)\s*\((.*)\)\s*;$").unwrap();
+    let fpr = Regex::new(r"^fprintf\s*\((.*)\)\s*;$").unwrap();
     let cout = Regex::new(r"^(?:std::)?cout\s*<<\s*(.*);$").unwrap();
     let incp = Regex::new(r"^(.+?)\s*(\+\+|--)\s*;$").unwrap();
     let incq = Regex::new(r"^(\+\+|--)\s*(.+);$").unwrap();
@@ -571,14 +917,30 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
     VARS.with(|v| v.borrow_mut().clear());
     STRUCTS.with(|v| v.borrow_mut().clear());
     FUNCS.with(|v| v.borrow_mut().clear());
-    // 先に構造体と関数の形を集める(定義の順番によらず呼べるように)
+    ALIAS.with(|v| v.borrow_mut().clear());
+    DEFINES.with(|v| v.borrow_mut().clear());
+    take_unsafe();
+    builtins();
+    let ret_of = |c: &regex::Captures| -> Option<T> {
+        if &c[1] == "void" || &c[3] == "main" {
+            return None;
+        }
+        let b = base_ty(&c[1])?;
+        Some(if c.get(2).is_some() { T::Raw(Box::new(b)) } else { b })
+    };
+    // 先に #define・構造体・関数の形を集める(定義の順番によらず呼べるように)
     {
         let mut cur: Option<(String, Vec<(String, T)>)> = None;
-        let field = Regex::new(&format!(r"^({TYPES})\s+(\w+)((?:\s*\[\s*\d+\s*\])*)\s*;$")).unwrap();
+        let field = Regex::new(&format!(r"^({TYPES})\s+(\w+)((?:\s*\[\s*\w+\s*\])*)\s*;$")).unwrap();
         for raw in src.lines() {
-            let l = raw.split("//").next().unwrap_or("").trim();
+            let l = strip_comment(raw).trim();
+            if let Some(c) = define.captures(l) {
+                DEFINES.with(|d| d.borrow_mut().insert(c[1].to_string(), c[2].trim().to_string()));
+                continue;
+            }
             if let Some(c) = sdef.captures(l) {
                 cur = Some((c[1].to_string(), vec![]));
+                STRUCTS.with(|m| m.borrow_mut().insert(c[1].to_string(), vec![]));
                 continue;
             }
             if let Some((n, fs)) = cur.as_mut() {
@@ -594,27 +956,35 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
                 continue;
             }
             if let Some(c) = func.captures(l) {
-                let ret = if &c[1] == "void" || &c[2] == "main" { None } else { base_ty(&c[1]) };
-                let ps = c[3].trim();
+                let ps = c[4].trim();
                 let pv: Option<Vec<T>> = if ps.is_empty() || ps == "void" { Some(vec![]) } else { ps.split(',').map(|p| param(p).map(|x| x.1)).collect() };
                 if let Some(pv) = pv {
-                    FUNCS.with(|m| m.borrow_mut().insert(c[2].to_string(), (pv, ret)));
+                    FUNCS.with(|m| m.borrow_mut().insert(c[3].to_string(), (pv, ret_of(&c))));
+                    ALIAS.with(|m| m.borrow_mut().remove(&c[3]));
                 }
             }
         }
     }
-    let mut out = String::from("// pl2pl c2rust で変換。TODO(c2rust) の行は手で直してください。\n#![allow(unused_mut, unused_variables, unused_parens, unused_assignments, non_snake_case)]\n\n");
+    let mut out = String::from("// pl2pl c2rust で変換。TODO(c2rust) の行は手で直してください。\n#![allow(unused_mut, unused_variables, unused_parens, unused_assignments, unused_unsafe, dead_code, non_snake_case, non_upper_case_globals)]\n\n");
     let mut in_main = false;
     let mut ret_ty: Option<T> = None;
     let mut stack: Vec<bool> = vec![];
     let mut in_struct = false;
     let mut todo = 0;
     for (i, raw) in src.lines().enumerate() {
-        let l = raw.split("//").next().unwrap_or("").trim();
+        let l = strip_comment(raw).trim();
         if l.is_empty() || l.starts_with("#include") || l.starts_with("using namespace") {
             continue;
         }
+        take_unsafe();
         let ind = "    ".repeat(stack.len());
+        if let Some(c) = define.captures(l) {
+            if let Some((e, t)) = ex(&c[2]).filter(|(_, t)| is_num(t)) {
+                set_var(&c[1], t.clone());
+                out.push_str(&format!("{ind}const {}: {} = {e};\n", &c[1], rs(&t)));
+                continue;
+            }
+        }
         if let Some(c) = sdef.captures(l) {
             if let Some(fs) = STRUCTS.with(|m| m.borrow().get(&c[1]).cloned()) {
                 out.push_str(&format!("#[derive(Clone, Copy, Default, Debug)]\nstruct {} {{\n", &c[1]));
@@ -633,11 +1003,11 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
             continue;
         }
         if let Some(c) = func.captures(l) {
-            let ps = c[3].trim();
+            let ps = c[4].trim();
             let pv: Option<Vec<(String, T)>> = if ps.is_empty() || ps == "void" { Some(vec![]) } else { ps.split(',').map(param).collect() };
             if let Some(pv) = pv {
-                let is_main = &c[2] == "main";
-                let rt = if is_main || &c[1] == "void" { None } else { base_ty(&c[1]) };
+                let is_main = &c[3] == "main";
+                let rt = ret_of(&c);
                 let r = rt.as_ref().map(|t| format!(" -> {}", rs(t))).unwrap_or_default();
                 let args: Vec<String> = pv
                     .iter()
@@ -646,7 +1016,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
                         if matches!(t, T::Slice(_) | T::Ptr(_)) { format!("{n}: {}", rs(t)) } else { format!("mut {n}: {}", rs(t)) }
                     })
                     .collect();
-                out.push_str(&format!("{ind}fn {}({}){r} {{\n", &c[2], args.join(", ")));
+                out.push_str(&format!("{ind}fn {}({}){r} {{\n", &c[3], args.join(", ")));
                 stack.push(is_main);
                 in_main = is_main;
                 ret_ty = rt;
@@ -663,10 +1033,13 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
             continue;
         }
         let mut emit: Option<String> = None;
+        let mut wrapped = false;
         if let Some(c) = forl.captures(l) {
             if c[1] == c[3] && c[1] == c[6] {
                 set_var(&c[1], T::I32);
-                if let (Some(a), Some(b)) = (ex_to(c[2].trim(), &T::I32), ex_to(c[5].trim(), &T::I32)) {
+                let a = ex_to(c[2].trim(), &T::I32).map(us);
+                let b = ex_to(c[5].trim(), &T::I32).map(us);
+                if let (Some(a), Some(b)) = (a, b) {
                     out.push_str(&format!("{ind}for {} in {a}..{}{b} {{\n", &c[1], if &c[4] == "<=" { "=" } else { "" }));
                     stack.push(false);
                     continue;
@@ -674,7 +1047,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
             }
         }
         if let Some(c) = ifl.captures(l) {
-            if let Some(e) = cond(c[2].trim()) {
+            if let Some(e) = cond(c[2].trim()).map(us) {
                 let pre = if c.get(1).is_some() { format!("{}}} else ", "    ".repeat(stack.len().saturating_sub(1))) } else { ind.clone() };
                 out.push_str(&format!("{pre}if {e} {{\n"));
                 if c.get(1).is_none() {
@@ -687,7 +1060,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
             let cd = c[1].trim();
             if Regex::new(r"^[1-9]\d*$").unwrap().is_match(cd) {
                 emit = Some("loop {".into());
-            } else if let Some(e) = cond(cd) {
+            } else if let Some(e) = cond(cd).map(us) {
                 emit = Some(format!("while {e} {{"));
             }
             if let Some(e) = emit {
@@ -699,10 +1072,32 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
         if let Some(c) = call.captures(l) {
             emit = if &c[1] == "puts" {
                 let a = c[2].trim();
-                (a.starts_with('"') && a.ends_with('"')).then(|| format!("println!({a});"))
+                if a.starts_with('"') && a.ends_with('"') {
+                    Some(format!("println!({a});"))
+                } else {
+                    match ex(a) {
+                        Some((e, T::Arr(el, _))) | Some((e, T::Slice(el))) if *el == T::Char => Some(format!("println!(\"{{}}\", c_str({e}.as_mut_ptr()));")),
+                        Some((e, T::Raw(el))) if *el == T::Char => Some(format!("println!(\"{{}}\", c_str({e}));")),
+                        _ => None,
+                    }
+                }
             } else {
                 fmt(&c[2]).map(|f| format!("print!({f});"))
             };
+        } else if let Some(c) = fpr.captures(l) {
+            let parts = split_args(&c[1]);
+            if parts.len() >= 2 {
+                let fl = parts[0].trim();
+                let rest = parts[1..].join(",");
+                emit = fmt(&rest).and_then(|f| match fl {
+                    "stdout" => Some(format!("print!({f});")),
+                    "stderr" => Some(format!("eprint!({f});")),
+                    _ => match ex(fl) {
+                        Some((e, T::Raw(el))) if *el == T::File => Some(format!("c_fputs({e}, &format!({f}));")),
+                        _ => None,
+                    },
+                });
+            }
         } else if let Some(c) = cout.captures(l) {
             let (mut f, mut a, mut nl, mut ok) = (String::new(), vec![], false, true);
             for it in c[1].split("<<").map(str::trim) {
@@ -725,44 +1120,51 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
             }
         } else if l == "break;" || l == "continue;" {
             emit = Some(l.to_string());
-        } else if let Some(c) = decl.captures(l) {
-            emit = (|| {
-                let b = base_ty(&c[1])?;
-                let mut ds = dims(&c[3])?;
-                if ds.first() == Some(&None) {
-                    let it = c.get(4)?.as_str().trim();
-                    let inner = it.strip_prefix('{')?.strip_suffix('}')?;
-                    ds[0] = Some(split_args(inner).iter().filter(|x| !x.trim().is_empty()).count());
-                }
-                let t = wrap(b, &ds)?;
-                let v = match c.get(4) {
-                    Some(m) => init(m.as_str(), &t)?,
-                    None => zero(&t),
-                };
-                set_var(&c[2], t.clone());
-                Some(format!("let mut {}: {} = {v};", &c[2], rs(&t)))
-            })();
+        } else if let Some(c) = multi.captures(l) {
+            let parts = split_args(&c[2]);
+            wrapped = true;
+            emit = if parts.len() > 1 {
+                parts.iter().map(|p| decl_one(&format!("{} {};", &c[1], p.trim()))).collect::<Option<Vec<_>>>().map(|v| v.join(&format!("\n{ind}")))
+            } else {
+                decl_one(l)
+            };
         } else if let Some(r) = l.strip_prefix("return").filter(|r| r.starts_with(' ') || r.starts_with(';')) {
             let r = r.trim().trim_end_matches(';').trim();
+            wrapped = true;
             emit = if in_main || r.is_empty() {
                 Some("return;".into())
             } else {
-                ret_ty.as_ref().and_then(|t| init(r, t)).map(|e| format!("return {e};"))
+                ret_ty.as_ref().and_then(|t| init(r, t)).map(|e| format!("return {};", us(e)))
             };
         } else if let Some(a) = assign(l) {
             emit = Some(a);
         } else if let Some(c) = incp.captures(l).map(|c| (c[1].to_string(), c[2].to_string())).or_else(|| incq.captures(l).map(|c| (c[2].to_string(), c[1].to_string()))) {
-            emit = ex(&c.0).filter(|(_, t)| is_num(t)).map(|(e, t)| format!("{e} {}= {};", if c.1 == "++" { "+" } else { "-" }, if is_float(&t) { "1.0" } else { "1" }));
+            let plus = c.1 == "++";
+            emit = ex(&c.0).and_then(|(e, t)| match t {
+                T::Raw(_) => Some(format!("{e} = {e}.wrapping_offset({});", if plus { "1" } else { "-1" })),
+                t if is_num(&t) => Some(format!("{e} {}= {};", if plus { "+" } else { "-" }, if is_float(&t) { "1.0" } else { "1" })),
+                _ => None,
+            });
         } else if callst.is_match(l) {
             emit = ex(l.trim_end_matches(';')).map(|(e, _)| format!("{e};"));
         }
         if let Some(e) = emit {
+            let e = if wrapped {
+                take_unsafe();
+                e
+            } else {
+                us(e)
+            };
             out.push_str(&format!("{ind}{e}\n"));
             continue;
         }
         todo += 1;
         out.push_str(&format!("{ind}// TODO(c2rust): {l}\n"));
         rep.push(format!("{name}:{}: 未対応 `{l}`", i + 1));
+    }
+    let rt_used = ["c_strlen(", "c_strcpy(", "c_strcat(", "c_strcmp(", "c_atoi(", "c_str(", "c_malloc(", "c_calloc(", "c_free(", "c_fopen(", "c_fclose(", "c_fputs", "c_fgets(", "CFile"];
+    if rt_used.iter().any(|k| out.contains(k)) {
+        out.push_str(RUNTIME);
     }
     if todo > 0 {
         rep.push(format!("{name}: 未対応の行 {todo} 個(TODO(c2rust) として残しました)"));
@@ -829,6 +1231,25 @@ mod tests {
         assert!(t.contains("inc(&mut v);"), "{t}");
         assert!(t.contains("ps[1].y = ((p.x) as f64) * 0.5;"), "{t}");
         assert!(t.contains("m[1][1] = sum(&mut a, 3);"), "{t}");
+        assert!(r.is_empty(), "{r:?}");
+    }
+    #[test]
+    fn pointers_strings_files_macros() {
+        let src = "#define N 4\nint f(int a[], int x) {\n  return a[0] + x;\n}\nint main() {\n  int a, b = 2, c[N];\n  int *p = &b;\n  *p = 5;\n  int *m = malloc(N * sizeof(int));\n  m[1] = 3;\n  free(m);\n  char s[8] = \"hi\";\n  strcat(s, \"!\");\n  printf(\"%s %c %5d\\n\", s, s[0], strlen(s));\n  double r = sqrt(2.0) + pow(2, 3);\n  int g = f(c, c[0]);\n  FILE *fp = fopen(\"o.txt\", \"w\");\n  fprintf(fp, \"%d\\n\", g);\n  fclose(fp);\n  return 0;\n}\n";
+        let (t, r) = conv(src);
+        assert!(t.contains("const N: i32 = 4;"), "{t}");
+        assert!(t.contains("let mut a: i32 = 0;\n    let mut b: i32 = 2;\n    let mut c: [i32; 4] = [0; 4];"), "{t}");
+        assert!(t.contains("let mut p: *mut i32 = (&mut b as *mut i32);"), "{t}");
+        assert!(t.contains("unsafe { (*p) = 5; }"), "{t}");
+        assert!(t.contains("let mut m: *mut i32 = (c_malloc(N * (std::mem::size_of::<i32>() as i32)) as *mut i32);"), "{t}");
+        assert!(t.contains("unsafe { (*m.wrapping_offset(1)) = 3; }"), "{t}");
+        assert!(t.contains("c_free((m as *mut u8));"), "{t}");
+        assert!(t.contains("let mut s: [u8; 8] = { let mut b = [0u8; 8]; b[..2].copy_from_slice(b\"hi\"); b };"), "{t}");
+        assert!(t.contains("print!(\"{} {} {:5}\\n\", c_str(s.as_mut_ptr()), ((s[0]) as u8 as char), c_strlen(s.as_mut_ptr()));"), "{t}");
+        assert!(t.contains("f64::sqrt(2.0) + f64::powf(2.0, 3.0)"), "{t}");
+        assert!(t.contains("let mut g: i32 = { let _a1 = c[0]; f(&mut c, _a1) };"), "{t}");
+        assert!(t.contains("c_fputs(fp, &format!(\"{}\\n\", g));"), "{t}");
+        assert!(t.contains("fn c_fgets("), "{t}");
         assert!(r.is_empty(), "{r:?}");
     }
 }
