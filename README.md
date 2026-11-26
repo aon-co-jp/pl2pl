@@ -596,3 +596,7 @@ Not supported yet:
 - Writing to string literals (undefined behavior in C too).
 
 Code that uses pointers becomes `unsafe`; turning it into safe Rust is left to a person.
+
+## 2026-11-27 追記: c2rust の `/* */` コメントと %x %X %o / Update: block comments and %x %X %o in c2rust
+**日本語**: `pl2pl c2rust` が `/* ... */` コメント(複数行・文字列の中は残す)と printf の `%x`・`%X`・`%o`(幅・`0`埋め込みつき)に対応。`tests/samples/c2rust/hexcomment.c` を gcc と rustc で動かし出力3行が完全一致、`tests/c2rust-check.sh` で再確認できる。単体テスト69件成功。**未対応**: 引数つきマクロ、ポインターのポインター、scanf、`%#x`(代替形式)。
+**English**: `pl2pl c2rust` now handles `/* ... */` comments (multi-line; text inside strings is kept) and printf `%x`, `%X` and `%o` (with width and zero padding). `tests/samples/c2rust/hexcomment.c` run with gcc and rustc gives identical 3-line output; rerun with `tests/c2rust-check.sh`. 69 unit tests pass. **Not yet**: function-like macros, pointer-to-pointer, scanf, and `%#x` (alternate form).
