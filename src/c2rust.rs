@@ -265,7 +265,15 @@ fn toks(s: &str) -> Option<Vec<String>> {
             }
             let mut n: String = c[st..i].iter().collect();
             if n.starts_with("0x") || n.starts_with("0X") {
-                return None;
+                // 16進数: i32 に収まるものだけ(それより大きいものは符号なしの意味が変わるので未対応のまま)
+                let digits = n[2..].trim_end_matches(|x: char| "uUlL".contains(x));
+                match i64::from_str_radix(digits, 16) {
+                    Ok(val) if val <= i32::MAX as i64 => {
+                        v.push(format!("0x{digits}"));
+                        continue;
+                    }
+                    _ => return None,
+                }
             }
             let fl = n.contains('.') || n.contains('e') || n.contains('E') || n.ends_with('f') || n.ends_with('F');
             n = n.trim_end_matches(|x: char| "fFlLuU".contains(x)).to_string();
@@ -311,13 +319,13 @@ fn toks(s: &str) -> Option<Vec<String>> {
         }
         if i + 1 < c.len() {
             let two: String = c[i..i + 2].iter().collect();
-            if ["->", "&&", "||", "<=", ">=", "==", "!=", "++", "--"].contains(&two.as_str()) {
+            if ["->", "&&", "||", "<=", ">=", "==", "!=", "++", "--", "<<", ">>"].contains(&two.as_str()) {
                 v.push(two);
                 i += 2;
                 continue;
             }
         }
-        if "+-*/%<>!&()[].,?:".contains(ch) {
+        if "+-*/%<>!&|^~()[].,?:".contains(ch) {
             v.push(ch.to_string());
             i += 1;
             continue;
@@ -336,10 +344,14 @@ fn prec(op: &str) -> Option<u8> {
     Some(match op {
         "||" => 1,
         "&&" => 2,
-        "==" | "!=" => 3,
-        "<" | ">" | "<=" | ">=" => 4,
-        "+" | "-" => 5,
-        "*" | "/" | "%" => 6,
+        "|" => 3,
+        "^" => 4,
+        "&" => 5,
+        "==" | "!=" => 6,
+        "<" | ">" | "<=" | ">=" => 7,
+        "<<" | ">>" => 8,
+        "+" | "-" => 9,
+        "*" | "/" | "%" => 10,
         _ => return None,
     })
 }
@@ -366,6 +378,16 @@ fn bin(op: &str, l: (String, T), r: (String, T)) -> Option<(String, T)> {
     }
     if !is_num(&l.1) || !is_num(&r.1) {
         return None;
+    }
+    if matches!(op, "&" | "|" | "^" | "<<" | ">>") {
+        let (li, ri) = (matches!(l.1, T::I32 | T::I64 | T::Char), matches!(r.1, T::I32 | T::I64 | T::Char));
+        if !li || !ri {
+            return None;
+        }
+        let target = if op == "<<" || op == ">>" { if l.1 == T::I64 { T::I64 } else { T::I32 } } else if l.1 == T::I64 || r.1 == T::I64 { T::I64 } else { T::I32 };
+        let a = coerce(&l.0, &l.1, &target)?;
+        let b = if op == "<<" || op == ">>" { format!("(({}) as u32)", r.0) } else { coerce(&r.0, &r.1, &target)? };
+        return Some((format!("({a} {op} {b})"), target));
     }
     let cmp = matches!(op, "==" | "!=" | "<" | ">" | "<=" | ">=");
     if l.1 == T::Char && r.1 == T::Char && cmp {
@@ -443,6 +465,10 @@ impl Px {
         if self.eat("!") {
             let (e, t) = self.unary()?;
             return Some((format!("!{}", to_bool(&e, &t)?), T::Bool));
+        }
+        if self.eat("~") {
+            let (e, t) = self.unary()?;
+            return if matches!(t, T::I32 | T::I64) { Some((format!("(!({e}))"), t)) } else { None };
         }
         if self.eat("*") {
             let (e, t) = self.unary()?;
@@ -864,10 +890,17 @@ fn split_assign(l: &str) -> Option<(String, String, String)> {
                     return None;
                 }
                 let pc = if k > 0 { b[k - 1] } else { b' ' };
-                if matches!(pc, b'=' | b'!' | b'<' | b'>') {
+                let shift = k >= 2 && matches!(pc, b'<' | b'>') && b[k - 2] == pc;
+                if !shift && matches!(pc, b'=' | b'!' | b'<' | b'>') {
                     return None;
                 }
-                let (lhs_end, op) = if matches!(pc, b'+' | b'-' | b'*' | b'/' | b'%') { (k - 1, (pc as char).to_string()) } else { (k, String::new()) };
+                let (lhs_end, op) = if shift {
+                    (k - 2, format!("{}{}", pc as char, pc as char))
+                } else if matches!(pc, b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^') {
+                    (k - 1, (pc as char).to_string())
+                } else {
+                    (k, String::new())
+                };
                 let s = std::str::from_utf8(b).ok()?;
                 return Some((s[..lhs_end].trim().to_string(), op, s[k + 1..].trim().to_string()));
             }
