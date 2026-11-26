@@ -1,5 +1,6 @@
 mod c2rust;
 mod cobol;
+mod f2c;
 mod f2rust;
 mod cport;
 mod gpu;
@@ -28,6 +29,7 @@ const USAGE: &str = "pl2pl — プラットフォーム/HPC 移植コンバー�
   pl2pl cobol  <dir|file> --out <dir> [--os linux|macos|unix|windows] [--dialect ibm|mf|default]
                                              COBOL(IBM)+JCL → 選んだ OS の GnuCOBOL(ソースは変えず、検出・ビルド手順・JCL→bash)
   pl2pl c2rust <dir|file> --out <dir>        (最初の一歩)単純な C(変数・if/while/for・関数・printf)→ Rust。わからない行は TODO で残す
+  pl2pl f2c <dir|file> --out <dir>           (最初の一歩)単純な Fortran → C。わからない行は TODO で残す
   pl2pl f2rust <dir|file> --out <dir>        (最初の一歩)単純な Fortran(program・integer/real・do・if・print *)→ Rust。わからない行は TODO で残す
   pl2pl cport  <dir|file> --out <dir>        UNIX の C → Windows/Linux で通る C(互換ヘッダー+報告)
   pl2pl omp    <dir|file> --out <dir>        C/C++ の独立ループへ OpenMP 指示行を付ける
@@ -204,6 +206,7 @@ fn main() {
     let n = match cmd {
         "cobol" => run(&input, &out, &["cbl", "cob", "cobol", "cpy", "jcl"], &mut rep, cobol::convert),
         "c2rust" => run(&input, &out, &["c", "cpp", "cc", "cxx"], &mut rep, c2rust::convert),
+        "f2c" => run(&input, &out, &["f90", "f95", "f03", "f08", "f", "for"], &mut rep, f2c::convert),
         "f2rust" => run(&input, &out, &["f90", "f95", "f03", "f08", "f", "for"], &mut rep, f2rust::convert),
         "cport" => run(&input, &out, &["c", "h"], &mut rep, cport::convert),
         "kokkos" => run(&input, &out, &["cc", "cpp", "cxx", "hpp"], &mut rep, kokkos::convert),

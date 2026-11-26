@@ -12,7 +12,7 @@ fn is_int_expr(e: &str) -> bool {
     !e.contains('.') && INTS.with(|s| ids.iter().all(|i| s.borrow().contains(i)))
 }
 
-fn ops(e: &str) -> String {
+pub(crate) fn ops(e: &str) -> String {
     let mut s = e.to_string();
     for (a, b) in [(".eq.", "=="), (".ne.", "!="), (".gt.", ">"), (".lt.", "<"), (".ge.", ">="), (".le.", "<="), (".and.", "&&"), (".or.", "||"), (".not.", "!"), ("/=", "!=")] {
         let re = Regex::new(&format!("(?i){}", regex::escape(a))).unwrap();
@@ -21,7 +21,7 @@ fn ops(e: &str) -> String {
     s
 }
 
-fn split_commas(s: &str) -> Vec<String> {
+pub(crate) fn split_commas(s: &str) -> Vec<String> {
     let (mut v, mut d, mut q, mut cur) = (vec![], 0, None::<char>, String::new());
     for c in s.chars() {
         match q {
