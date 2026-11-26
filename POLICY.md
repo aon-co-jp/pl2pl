@@ -65,3 +65,43 @@ Policy: no new REST (Connect/gRPC), never write secrets, keep unsupported items 
 
 It builds. **Not yet verified**: running the unit tests (a new test `pointers_strings_files_macros` was added), and comparing gcc and rustc output for the sample `F:\_work_pl2pl_x3\s.c`. No output match is claimed yet.
 **Resume message**: "In F:\pl2pl, make `cargo test` pass. Convert `F:\_work_pl2pl_x3\s.c` with `pl2pl c2rust s.c --out out`, compare gcc and rustc output in WSL, and fix any differences. Then write only verified facts in Japanese and English to README, CLAUDE, PORTING and POLICY, and push. Do not touch the other session's uncommitted changes in `src/main.rs`."
+
+## 2026-11-26 追記: c2rust の未対応部分に対応(gcc と出力一致を確認) / c2rust: remaining features done, output matches gcc
+
+**日本語**: 上の「チェックポイント(作業中)」の続きで、確認が終わりました。`pl2pl c2rust` が次のものに対応しました。
+- ポインタ変数(`int *p = &v;`、`int *q = c;`、`q[1]`、`q = q + 2`、`*p`)。Rust の生ポインタ `*mut T` に置き換え、読み書きは `unsafe` で囲みます。
+- malloc/calloc/free。
+- 文字列: `char s[N] = "..."`、`char *`、strlen/strcpy/strcat/strcmp/atoi、printf の `%s` `%c` と幅・左寄せ(`%-8s`、`%5d`)。
+- `#define 名前 値`(配列の大きさにも使えます)。
+- ファイル入出力: fopen/fprintf/fputs/fgets/fclose。出力の末尾に小さな実行時関数を付けます。
+- `int a, b = 7, c[N];` のような複数宣言。
+- 数学関数: sqrt/pow/fabs/abs/floor/ceil/sin/cos/exp/log など。
+- `f(d, d[2])` の借用エラー回避: ほかの引数を先に一時変数へ移します。
+
+これらを使った C のサンプル(`F:\_work_pl2pl_x3\s.c`)を WSL の gcc と rustc で動かしました。標準出力 13 行と書き出したファイル `out.txt` の中身が、どちらも完全に一致しました。前回のサンプル(構造体・2次元配列など)も引き続き一致しています。単体テストは 69 件すべて成功です。
+
+まだできないこと:
+- 関数形式のマクロ、ポインタのポインタ、scanf/fscanf。
+- `/* */` 形式のコメント、`%x` などの書式。
+- 文字列リテラルを書き換えること(C でも未定義の動作です)。
+
+ポインタを使う部分は `unsafe` になるので、安全な Rust への手直しは人が行う前提です。
+
+**English**: This continues the "checkpoint (in progress)" above; verification is now done. `pl2pl c2rust` now handles:
+- Pointer variables (`int *p = &v;`, `int *q = c;`, `q[1]`, `q = q + 2`, `*p`). They become Rust raw pointers `*mut T`, and reads and writes are wrapped in `unsafe`.
+- malloc/calloc/free.
+- Strings: `char s[N] = "..."`, `char *`, strlen/strcpy/strcat/strcmp/atoi, and printf `%s`, `%c`, widths and left alignment (`%-8s`, `%5d`).
+- `#define NAME value`, which also works as an array size.
+- File I/O: fopen/fprintf/fputs/fgets/fclose, through a small runtime appended to the output.
+- Multiple declarations such as `int a, b = 7, c[N];`.
+- Math functions: sqrt/pow/fabs/abs/floor/ceil/sin/cos/exp/log and others.
+- Avoiding the borrow error in `f(d, d[2])`: the other arguments go into temporaries first.
+
+A C sample using all of these (`F:\_work_pl2pl_x3\s.c`) was compiled with gcc and rustc in WSL. The 13 lines of standard output and the written file `out.txt` match exactly. The previous sample (structs, 2-D arrays and so on) still matches. All 69 unit tests pass.
+
+Not supported yet:
+- Function-like macros, pointers to pointers, scanf/fscanf.
+- `/* */` comments and formats such as `%x`.
+- Writing to string literals (undefined behavior in C too).
+
+Code that uses pointers becomes `unsafe`; turning it into safe Rust is left to a person.

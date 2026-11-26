@@ -664,6 +664,7 @@ fn fmt(args: &str) -> Option<String> {
                 _ => return None,
             },
             "c" => format!("(({e}) as u8 as char)"),
+            _ if t == T::Bool => format!("(({e}) as i32)"),
             _ => e,
         });
         let (minus, w, pr) = (&c[1], &c[2], c.get(3).map(|x| x.as_str()).unwrap_or(""));
@@ -1242,7 +1243,7 @@ mod tests {
         assert!(t.contains("let mut p: *mut i32 = (&mut b as *mut i32);"), "{t}");
         assert!(t.contains("unsafe { (*p) = 5; }"), "{t}");
         assert!(t.contains("let mut m: *mut i32 = (c_malloc(N * (std::mem::size_of::<i32>() as i32)) as *mut i32);"), "{t}");
-        assert!(t.contains("unsafe { (*m.wrapping_offset(1)) = 3; }"), "{t}");
+        assert!(t.contains("unsafe { (*m.wrapping_offset((1) as isize)) = 3; }"), "{t}");
         assert!(t.contains("c_free((m as *mut u8));"), "{t}");
         assert!(t.contains("let mut s: [u8; 8] = { let mut b = [0u8; 8]; b[..2].copy_from_slice(b\"hi\"); b };"), "{t}");
         assert!(t.contains("print!(\"{} {} {:5}\\n\", c_str(s.as_mut_ptr()), ((s[0]) as u8 as char), c_strlen(s.as_mut_ptr()));"), "{t}");
