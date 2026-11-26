@@ -137,6 +137,12 @@ fn c_strcpy(d: *mut u8, s: *mut u8) -> *mut u8 { unsafe { let mut i = 0; loop { 
 fn c_strcat(d: *mut u8, s: *mut u8) -> *mut u8 { let n = c_strlen(d) as usize; c_strcpy(d.wrapping_add(n), s); d }
 fn c_strcmp(a: *mut u8, b: *mut u8) -> i32 { unsafe { let mut i = 0; loop { let (x, y) = (*a.add(i), *b.add(i)); if x != y || x == 0 { return x as i32 - y as i32; } i += 1; } } }
 fn c_atoi(p: *mut u8) -> i32 { let s = c_str(p).trim_start(); let mut n: i32 = 0; let mut neg = false; for (k, c) in s.chars().enumerate() { if k == 0 && (c == '-' || c == '+') { neg = c == '-'; continue; } match c.to_digit(10) { Some(d) => n = n * 10 + d as i32, None => break } } if neg { -n } else { n } }
+thread_local! { static C_SCAN_Q: std::cell::RefCell<std::collections::VecDeque<String>> = std::cell::RefCell::new(std::collections::VecDeque::new()); }
+fn c_scan_tok() -> String { loop { if let Some(t) = C_SCAN_Q.with(|q| q.borrow_mut().pop_front()) { return t; } let mut l = String::new(); if std::io::stdin().read_line(&mut l).unwrap_or(0) == 0 { return String::new(); } C_SCAN_Q.with(|q| q.borrow_mut().extend(l.split_whitespace().map(String::from))); } }
+fn c_scan_i32() -> i32 { c_scan_tok().parse().unwrap_or(0) }
+fn c_scan_i64() -> i64 { c_scan_tok().parse().unwrap_or(0) }
+fn c_scan_f64() -> f64 { c_scan_tok().parse().unwrap_or(0.0) }
+fn c_scan_f32() -> f32 { c_scan_tok().parse().unwrap_or(0.0) }
 fn c_str(p: *mut u8) -> &'static str { unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(p, c_strlen(p) as usize)) } }
 extern "C" { fn malloc(n: usize) -> *mut u8; fn calloc(n: usize, m: usize) -> *mut u8; fn free(p: *mut u8); }
 fn c_malloc(n: i32) -> *mut u8 { unsafe { malloc(n as usize) } }
@@ -1056,6 +1062,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
     let whl = Regex::new(r"^while\s*\((.*)\)\s*\{$").unwrap();
     let call = Regex::new(r"^(printf|puts)\s*\((.*)\)\s*;$").unwrap();
     let fpr = Regex::new(r"^fprintf\s*\((.*)\)\s*;$").unwrap();
+    let scanf_re = Regex::new(r"^scanf\s*\((.*)\)\s*;$").unwrap();
     let cout = Regex::new(r"^(?:std::)?cout\s*<<\s*(.*);$").unwrap();
     let incp = Regex::new(r"^(.+?)\s*(\+\+|--)\s*;$").unwrap();
     let incq = Regex::new(r"^(\+\+|--)\s*(.+);$").unwrap();
@@ -1244,6 +1251,36 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
                     },
                 });
             }
+        } else if let Some(c) = scanf_re.captures(l) {
+            // scanf("%d %lf", &a, &b); → 変数へ代入(`&名前` だけ。空白区切りの数値)
+            let parts = split_args(&c[1]);
+            let f = parts.first().map(|s| s.trim().to_string()).unwrap_or_default();
+            let spec = Regex::new(r"%(?:ll|l|h)?([dfi])").unwrap();
+            let specs: Vec<(String, bool)> = spec.captures_iter(&f).map(|m| (m[1].to_string(), m[0].starts_with("%l"))).collect();
+            if f.starts_with('"') && specs.len() == parts.len() - 1 && !specs.is_empty() {
+                let mut stmts = vec![];
+                for ((letter, long), a) in specs.iter().zip(&parts[1..]) {
+                    let a = a.trim();
+                    let Some(name) = a.strip_prefix('&').map(str::trim).filter(|n| n.chars().all(|ch| ch.is_alphanumeric() || ch == '_')) else {
+                        stmts.clear();
+                        break;
+                    };
+                    let f_name = match (ex(name).map(|x| x.1), letter.as_str(), long) {
+                        (Some(T::I32), "d" | "i", false) => "c_scan_i32",
+                        (Some(T::I64), "d" | "i", _) => "c_scan_i64",
+                        (Some(T::F64), "f", true) => "c_scan_f64",
+                        (Some(T::F32), "f", false) => "c_scan_f32",
+                        _ => {
+                            stmts.clear();
+                            break;
+                        }
+                    };
+                    stmts.push(format!("{name} = {f_name}();"));
+                }
+                if !stmts.is_empty() {
+                    emit = Some(stmts.join(" "));
+                }
+            }
         } else if let Some(c) = cout.captures(l) {
             let (mut f, mut a, mut nl, mut ok) = (String::new(), vec![], false, true);
             for it in c[1].split("<<").map(str::trim) {
@@ -1308,7 +1345,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
         out.push_str(&format!("{ind}// TODO(c2rust): {l}\n"));
         rep.push(format!("{name}:{}: 未対応 `{l}`", i + 1));
     }
-    let rt_used = ["c_strlen(", "c_strcpy(", "c_strcat(", "c_strcmp(", "c_atoi(", "c_str(", "c_malloc(", "c_calloc(", "c_free(", "c_fopen(", "c_fclose(", "c_fputs", "c_fgets(", "CFile"];
+    let rt_used = ["c_strlen(", "c_strcpy(", "c_strcat(", "c_strcmp(", "c_atoi(", "c_str(", "c_malloc(", "c_calloc(", "c_free(", "c_fopen(", "c_fclose(", "c_fputs", "c_fgets(", "CFile", "c_scan_"];
     if rt_used.iter().any(|k| out.contains(k)) {
         out.push_str(RUNTIME);
     }

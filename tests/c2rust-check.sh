@@ -12,7 +12,7 @@ for f in "${files[@]}"; do
   $B c2rust "$f" --out $d/rs >/dev/null
   r=$(ls $d/rs/*.rs | head -1)
   rustc -o $d/r.out "$r" 2>$d/rustc.err || { echo "NG rustc $n"; head -20 $d/rustc.err; rc=1; continue; }
-  (cd $d && ./c.out >c.txt; ./r.out >r.txt)
+  in=${f%.c}.in; if [ -f "$in" ]; then in=$(realpath "$in"); else in=/dev/null; fi; (cd $d && ./c.out <"$in" >c.txt; ./r.out <"$in" >r.txt)
   if diff -q $d/c.txt $d/r.txt >/dev/null; then echo "OK $n ($(wc -l <$d/c.txt) lines)"; else echo "DIFF $n"; diff $d/c.txt $d/r.txt | head; rc=1; fi
 done
 exit $rc
