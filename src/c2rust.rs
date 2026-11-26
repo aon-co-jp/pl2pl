@@ -137,6 +137,7 @@ fn c_strcpy(d: *mut u8, s: *mut u8) -> *mut u8 { unsafe { let mut i = 0; loop { 
 fn c_strcat(d: *mut u8, s: *mut u8) -> *mut u8 { let n = c_strlen(d) as usize; c_strcpy(d.wrapping_add(n), s); d }
 fn c_strcmp(a: *mut u8, b: *mut u8) -> i32 { unsafe { let mut i = 0; loop { let (x, y) = (*a.add(i), *b.add(i)); if x != y || x == 0 { return x as i32 - y as i32; } i += 1; } } }
 fn c_atoi(p: *mut u8) -> i32 { let s = c_str(p).trim_start(); let mut n: i32 = 0; let mut neg = false; for (k, c) in s.chars().enumerate() { if k == 0 && (c == '-' || c == '+') { neg = c == '-'; continue; } match c.to_digit(10) { Some(d) => n = n * 10 + d as i32, None => break } } if neg { -n } else { n } }
+fn c_alt(v: u32, k: char) -> String { if v == 0 { return "0".to_string(); } match k { 'x' => format!("0x{:x}", v), 'X' => format!("0X{:X}", v), _ => format!("0{:o}", v) } }
 thread_local! { static C_SCAN_Q: std::cell::RefCell<std::collections::VecDeque<String>> = std::cell::RefCell::new(std::collections::VecDeque::new()); }
 fn c_scan_tok() -> String { loop { if let Some(t) = C_SCAN_Q.with(|q| q.borrow_mut().pop_front()) { return t; } let mut l = String::new(); if std::io::stdin().read_line(&mut l).unwrap_or(0) == 0 { return String::new(); } C_SCAN_Q.with(|q| q.borrow_mut().extend(l.split_whitespace().map(String::from))); } }
 fn c_scan_i32() -> i32 { c_scan_tok().parse().unwrap_or(0) }
@@ -672,7 +673,7 @@ fn fmt(args: &str) -> Option<String> {
     if !(f.starts_with('"') && f.ends_with('"') && f.len() >= 2) {
         return None;
     }
-    let spec = Regex::new(r"%(-?)(\d*)(\.\d+)?(?:ll|l|h)?([dfscuixXo])|%%").unwrap();
+    let spec = Regex::new(r"%([-#]*)(\d*)(\.\d+)?(?:ll|l|h)?([dfscuixXo])|%%").unwrap();
     let body = &f[1..f.len() - 1];
     let esc = |x: &str| x.replace('{', "{{").replace('}', "}}");
     let (mut out, mut last, mut k, mut vals) = (String::new(), 0, 0, vec![]);
@@ -695,16 +696,22 @@ fn fmt(args: &str) -> Option<String> {
                 _ => return None,
             },
             "c" => format!("(({e}) as u8 as char)"),
+            "x" | "X" | "o" if c[1].contains('#') => format!("c_alt(({e}) as u32, '{letter}')"),
             _ if t == T::Bool => format!("(({e}) as i32)"),
             _ => e,
         });
-        let (minus, w, pr) = (&c[1], &c[2], c.get(3).map(|x| x.as_str()).unwrap_or(""));
-        let align = if !minus.is_empty() { "<" } else if !w.is_empty() && (letter == "s" || letter == "c") { ">" } else { "" };
-        let ty = match letter {
-            "x" => "x",
-            "X" => "X",
-            "o" => "o",
-            _ => "",
+        let alt = c[1].contains('#') && matches!(letter, "x" | "X" | "o");
+        let (minus, w, pr) = (c[1].contains('-'), &c[2], c.get(3).map(|x| x.as_str()).unwrap_or(""));
+        let align = if minus { "<" } else if !w.is_empty() && (letter == "s" || letter == "c" || alt) { ">" } else { "" };
+        let ty = if alt {
+            ""
+        } else {
+            match letter {
+                "x" => "x",
+                "X" => "X",
+                "o" => "o",
+                _ => "",
+            }
         };
         let sp = format!("{align}{w}{pr}{ty}");
         out.push_str(&if sp.is_empty() { "{}".to_string() } else { format!("{{:{sp}}}") });
@@ -1345,7 +1352,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
         out.push_str(&format!("{ind}// TODO(c2rust): {l}\n"));
         rep.push(format!("{name}:{}: 未対応 `{l}`", i + 1));
     }
-    let rt_used = ["c_strlen(", "c_strcpy(", "c_strcat(", "c_strcmp(", "c_atoi(", "c_str(", "c_malloc(", "c_calloc(", "c_free(", "c_fopen(", "c_fclose(", "c_fputs", "c_fgets(", "CFile", "c_scan_"];
+    let rt_used = ["c_strlen(", "c_strcpy(", "c_strcat(", "c_strcmp(", "c_atoi(", "c_str(", "c_malloc(", "c_calloc(", "c_free(", "c_fopen(", "c_fclose(", "c_fputs", "c_fgets(", "CFile", "c_scan_", "c_alt("];
     if rt_used.iter().any(|k| out.contains(k)) {
         out.push_str(RUNTIME);
     }
