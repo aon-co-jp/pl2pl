@@ -93,6 +93,9 @@ thread_local! {
     static ALIAS: RefCell<HashMap<String, String>> = Default::default();
     static DEFINES: RefCell<HashMap<String, String>> = Default::default();
     static UNSAFE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    // 関数の外の変数(`static mut`)。MASTER は全部、ACTIVE は今の関数で局所変数に隠されていないもの
+    static GLOB_MASTER: RefCell<std::collections::HashSet<String>> = Default::default();
+    static GLOB_ACTIVE: RefCell<std::collections::HashSet<String>> = Default::default();
 }
 
 fn mark() {
@@ -194,10 +197,19 @@ fn unescape_len(s: &str) -> usize {
 }
 
 fn var(n: &str) -> Option<T> {
-    VARS.with(|v| v.borrow().get(n).cloned())
+    let r = VARS.with(|v| v.borrow().get(n).cloned());
+    if r.is_some() && GLOB_ACTIVE.with(|g| g.borrow().contains(n)) {
+        mark(); // `static mut` の読み書きは unsafe
+    }
+    r
 }
 fn set_var(n: &str, t: T) {
+    GLOB_ACTIVE.with(|g| g.borrow_mut().remove(n)); // 局所変数が同じ名前の大域変数を隠す
     VARS.with(|v| v.borrow_mut().insert(n.to_string(), t));
+}
+fn reset_globals_for_function() {
+    let m = GLOB_MASTER.with(|g| g.borrow().clone());
+    GLOB_ACTIVE.with(|g| *g.borrow_mut() = m);
 }
 
 fn is_lit_int(e: &str) -> bool {
@@ -672,7 +684,10 @@ impl Px {
             }
             return Some((format!("{fname}({})", args.join(", ")), ret.unwrap_or(T::I32)));
         }
-        Some((tk.clone(), var(&tk)?))
+        let t = var(&tk)?;
+        // 大域変数は `G_名前`(Rust は let で static を隠せないので、名前を分ける)
+        let nm = if GLOB_ACTIVE.with(|g| g.borrow().contains(&tk)) { format!("G_{tk}") } else { tk.clone() };
+        Some((nm, t))
     }
 }
 
@@ -1206,11 +1221,31 @@ fn split_one_liners(src: &str) -> String {
                 }
             }
         }
+        // 1行に文が複数ある(`a(); b();`)ときは1文ずつの行にする
+        if depth < 6 && !t.contains('{') && !t.contains('}') && !t.starts_with('#') {
+            let kws = ["for", "while", "if", "else", "do", "case", "switch", "default", "return"];
+            let first = t.split(|c: char| !c.is_alphanumeric() && c != '_').next().unwrap_or("");
+            if !kws.contains(&first) {
+                let ss = stmts(t);
+                if ss.len() > 1 && ss.iter().all(|x| x.ends_with(';')) {
+                    for st in ss {
+                        out.push(st);
+                    }
+                    return;
+                }
+            }
+        }
         out.push(t.to_string());
     }
     let mut out: Vec<String> = vec![];
+    let mut brace = 0i32;
     for l in src.lines() {
         let t = l.trim();
+        // 関数の外の `static`(ファイル内だけの変数・関数)は、1ファイルの変換では付けなくてよい
+        let l2: String = if brace == 0 && t.starts_with("static ") && !t.starts_with("static inline") { t["static ".len()..].to_string() } else { l.to_string() };
+        let l = l2.as_str();
+        let t = l.trim();
+        brace += l.matches('{').count() as i32 - l.matches('}').count() as i32;
         if t.starts_with("else") && out.last().map(|x| x == "}").unwrap_or(false) {
             out.pop();
             one(&format!("}} {t}"), &mut out, 0);
@@ -1335,6 +1370,8 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
     let incq = Regex::new(r"^(\+\+|--)\s*(.+);$").unwrap();
     let callst = Regex::new(r"^\w+\s*\(.*\)\s*;$").unwrap();
     VARS.with(|v| v.borrow_mut().clear());
+    GLOB_MASTER.with(|g| g.borrow_mut().clear());
+    GLOB_ACTIVE.with(|g| g.borrow_mut().clear());
     STRUCTS.with(|v| v.borrow_mut().clear());
     FUNCS.with(|v| v.borrow_mut().clear());
     ALIAS.with(|v| v.borrow_mut().clear());
@@ -1435,6 +1472,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
                 let is_main = &c[3] == "main";
                 let rt = ret_of(&c);
                 let r = rt.as_ref().map(|t| format!(" -> {}", rs(t))).unwrap_or_default();
+                reset_globals_for_function();
                 let args: Vec<String> = pv
                     .iter()
                     .map(|(n, t)| {
@@ -1694,6 +1732,31 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
             } else {
                 decl_one(l)
             };
+            // 関数の外の宣言は `static mut`(使うたびに unsafe)
+            if stack.is_empty() {
+                if let Some(e) = emit.take() {
+                    let mut names = vec![];
+                    for ln in e.lines() {
+                        if let Some(r) = ln.trim_start().strip_prefix("let mut ") {
+                            if let Some(n) = r.split(':').next() {
+                                names.push(n.trim().to_string());
+                            }
+                        }
+                    }
+                    for n in &names {
+                        GLOB_MASTER.with(|g| g.borrow_mut().insert(n.clone()));
+                        GLOB_ACTIVE.with(|g| g.borrow_mut().insert(n.clone()));
+                    }
+                    let fixed: Vec<String> = e
+                        .lines()
+                        .map(|ln| match ln.trim_start().strip_prefix("let mut ") {
+                            Some(r) => format!("static mut G_{r}"),
+                            None => ln.to_string(),
+                        })
+                        .collect();
+                    emit = Some(fixed.join(&format!("\n{ind}")));
+                }
+            }
         } else if let Some(r) = l.strip_prefix("return").filter(|r| r.starts_with(' ') || r.starts_with(';')) {
             let r = r.trim().trim_end_matches(';').trim();
             wrapped = true;
