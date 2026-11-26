@@ -512,3 +512,25 @@ Situação: uma ferramenta que reescreve programas antigos (COBOL, C, C++, Fortr
 ## 2026-11-26 追記: pl2pl f2c(単純な Fortran → C) / Added: pl2pl f2c (simple Fortran to C)
 **日本語**: `pl2pl f2c <dir|file> --out <dir>` を追加(program・integer/real・do〈刻み付き〉・if/else・`print *`)。わからない行・配列は `TODO(f2c)` で残しレポートへ。試験2件成功、gcc でビルドし `print *` の整形(整数は幅11)を確認。**未確認**: この WSL に gfortran が無く、本物の gfortran との出力一致は未実施(期待値は gfortran の仕様どおりに合わせただけ)。**未了**: c2f、C↔C++、Rust→C/Fortran、配列・subroutine。
 **English**: Added `pl2pl f2c <dir|file> --out <dir>` (program, integer/real, do with step, if/else, `print *`). Unsupported lines and arrays stay as `TODO(f2c)` and go to the report. 2 tests pass; the output builds with gcc and matches the expected `print *` layout (integers width 11). **Unverified**: this WSL has no gfortran, so equality with real gfortran output was not checked. **Open**: c2f, C to/from C++, Rust to C/Fortran, arrays and subroutines.
+
+## 2026-11-26 追記: c2rust の暗黙の型変換・配列引数・2次元配列・構造体・ポインタ引数 / c2rust: promotion, array params, 2-D arrays, structs, pointer params
+
+**日本語**: `pl2pl c2rust` の式の読み方を、行の置き換えから「型を覚える小さな構文解析」に作り直しました。これで次のことができます。
+- 整数と小数を混ぜた式は C と同じように小数へ変換します(`k * 1.5`、`int n = x;`、`n += x;`)。`k / 2 + x` の `k / 2` は C と同じく整数のまま割ります。
+- 配列を関数に渡せます(`int a[]` → `&mut [i32]`、呼ぶ側は `&mut a`)。
+- 2次元配列を使えます(`int m[3][3] = {{...}}`、引数 `int m[][3]`)。
+- 単純な構造体を使えます(`struct P { int x; double y; };`、`{1, 2.5}` での初期化、構造体の配列、`.` と `->`)。
+- 出力用のポインタ引数を使えます(`void f(int *x)` → `x: &mut i32`、`f(&v)` → `f(&mut v)`)。
+
+これらをまとめた C のサンプルを WSL の gcc と rustc で動かし、7行の出力が完全に一致しました。単体テストは 60 件すべて成功です。
+まだできないこと: ポインタ変数(`int *p = ...`)・動的確保・文字列操作・マクロ・ファイル I/O・`int a, b;` のような複数宣言・`sqrt` などの標準関数。また、同じ配列を `&mut` で渡しながら同じ呼び出しの中で読むと、Rust の借用の規則でコンパイルが通りません。
+
+**English**: `pl2pl c2rust` now reads expressions with a small typed parser instead of line-by-line replacement. It now handles:
+- Implicit int-to-double promotion as in C (`k * 1.5`, `int n = x;`, `n += x;`). In `k / 2 + x`, `k / 2` stays an integer division, as in C.
+- Passing arrays to functions (`int a[]` becomes `&mut [i32]`; the caller passes `&mut a`).
+- 2-D arrays (`int m[3][3] = {{...}}`, parameter `int m[][3]`).
+- Simple structs (`struct P { int x; double y; };`, `{1, 2.5}` initializers, arrays of structs, `.` and `->`).
+- Pointer out-parameters (`void f(int *x)` becomes `x: &mut i32`; `f(&v)` becomes `f(&mut v)`).
+
+A C sample using all of these was compiled with gcc and rustc in WSL, and the 7 output lines match exactly. All 60 unit tests pass.
+Not yet supported: pointer variables (`int *p = ...`), dynamic allocation, string handling, macros, file I/O, multiple declarations such as `int a, b;`, and standard functions such as `sqrt`. Also, passing an array as `&mut` while reading it in the same call does not compile under Rust's borrow rules.
