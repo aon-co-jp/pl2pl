@@ -1060,8 +1060,126 @@ fn expand_fn_macros(src: &str) -> String {
     res
 }
 
+/// 1行に収まった `if (x) { a; b; }`・`do { i++; } while (c);`・`int f(int v) { return v; }` を、複数行に開く
+/// (本体は1行ずつ変換するため)。初期化子の `= { ... }` や struct・enum には触らない。
+fn split_one_liners(src: &str) -> String {
+    fn open_close(l: &str) -> Option<(usize, usize)> {
+        let (mut q, mut esc, mut d, mut first) = (None::<char>, false, 0i32, None);
+        for (i, ch) in l.char_indices() {
+            if let Some(qc) = q {
+                if esc { esc = false } else if ch == '\\' { esc = true } else if ch == qc { q = None }
+                continue;
+            }
+            match ch {
+                '"' | '\'' => q = Some(ch),
+                '{' => {
+                    if d == 0 { first = Some(i); }
+                    d += 1;
+                }
+                '}' => {
+                    d -= 1;
+                    if d == 0 { return first.map(|f| (f, i)); }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    fn stmts(inner: &str) -> Vec<String> {
+        let (mut v, mut cur, mut d, mut q, mut esc) = (vec![], String::new(), 0i32, None::<char>, false);
+        for ch in inner.chars() {
+            cur.push(ch);
+            if let Some(qc) = q {
+                if esc { esc = false } else if ch == '\\' { esc = true } else if ch == qc { q = None }
+                continue;
+            }
+            match ch {
+                '"' | '\'' => q = Some(ch),
+                '(' | '[' | '{' => d += 1,
+                ')' | ']' | '}' => d -= 1,
+                ';' if d == 0 => { v.push(cur.trim().to_string()); cur.clear(); }
+                _ => {}
+            }
+        }
+        if !cur.trim().is_empty() { v.push(cur.trim().to_string()); }
+        v
+    }
+    fn one(l: &str, out: &mut Vec<String>, depth: usize) {
+        let t = l.trim();
+        // `} else 文;`(波括弧なしの else)
+        if let Some(r) = t.strip_prefix("} else ") {
+            let r = r.trim();
+            if !r.is_empty() && !r.starts_with('{') && !r.starts_with("if") && !r.starts_with("//") && depth < 6 {
+                out.push("} else {".to_string());
+                one(r, out, depth + 1);
+                out.push("}".to_string());
+                return;
+            }
+        }
+        // 波括弧なしの `for (...) 文;`・`if (...) 文;`・`while (...) 文;` は波括弧つきに直す
+        for kw in ["for", "while", "if", "} else if"] {
+            if let Some(r) = t.strip_prefix(kw) {
+                let r = r.trim_start();
+                if r.starts_with('(') {
+                    let (mut d, mut end) = (0i32, None);
+                    for (i, ch) in r.char_indices() {
+                        match ch {
+                            '(' => d += 1,
+                            ')' => {
+                                d -= 1;
+                                if d == 0 {
+                                    end = Some(i);
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(e) = end {
+                        let rest = r[e + 1..].trim();
+                        if !rest.is_empty() && !rest.starts_with('{') && rest != ";" && !rest.contains(" else") && !rest.starts_with("//") && depth < 6 {
+                            out.push(format!("{kw} {} {{", &r[..=e]));
+                            one(rest, out, depth + 1);
+                            out.push("}".to_string());
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        if depth < 6 && !t.starts_with('#') && !t.contains("//") && !t.starts_with("struct") && !t.starts_with("enum") && !t.starts_with("typedef") {
+            let (pre, t2) = if let Some(r) = t.strip_prefix('}') { ("} ", r.trim_start()) } else { ("", t) };
+            if let Some((a, b)) = open_close(t2) {
+                let core = t2[..a].trim_end();
+                if core.ends_with(')') || core.ends_with("else") || core == "do" {
+                    out.push(format!("{pre}{core} {{"));
+                    for st in stmts(&t2[a + 1..b]) {
+                        one(&st, out, depth + 1);
+                    }
+                    let tail = t2[b + 1..].trim();
+                    one(&format!("}} {tail}").trim_end().to_string(), out, depth + 1);
+                    return;
+                }
+            }
+        }
+        out.push(t.to_string());
+    }
+    let mut out: Vec<String> = vec![];
+    for l in src.lines() {
+        let t = l.trim();
+        if t.starts_with("else") && out.last().map(|x| x == "}").unwrap_or(false) {
+            out.pop();
+            one(&format!("}} {t}"), &mut out, 0);
+        } else {
+            one(l, &mut out, 0);
+        }
+    }
+    out.join("
+")
+}
+
 pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, String)> {
-    let src_owned = expand_fn_macros(&strip_block_comments(src));
+    let src_owned = split_one_liners(&expand_fn_macros(&strip_block_comments(src)));
     let src: &str = &src_owned;
     let func = Regex::new(&format!(r"^({TYPES}|void)(?:\s+|\s*(\*)\s*)(\w+)\s*\(([^)]*)\)\s*\{{?\s*$")).unwrap();
     let multi = Regex::new(&format!(r"^({TYPES})\s+(.+);$")).unwrap();
@@ -1132,6 +1250,8 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
     let mut in_main = false;
     let mut ret_ty: Option<T> = None;
     let mut stack: Vec<bool> = vec![];
+    let mut dos: Vec<usize> = vec![];
+    let dowhile = Regex::new(r"^\}\s*while\s*\((.*)\)\s*;$").unwrap();
     let mut in_struct = false;
     let mut todo = 0;
     for (i, raw) in src.lines().enumerate() {
@@ -1184,6 +1304,26 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
                 in_main = is_main;
                 ret_ty = rt;
                 continue;
+            }
+        }
+        if l == "do {" || l == "do{" {
+            out.push_str(&format!("{ind}loop {{
+"));
+            stack.push(false);
+            dos.push(stack.len());
+            continue;
+        }
+        if let Some(c) = dowhile.captures(l) {
+            if dos.last() == Some(&stack.len()) {
+                if let Some(e) = cond(c[1].trim()).map(us) {
+                    dos.pop();
+                    out.push_str(&format!("{ind}if !({e}) {{ break; }}
+"));
+                    stack.pop();
+                    out.push_str(&format!("{}}}
+", "    ".repeat(stack.len())));
+                    continue;
+                }
             }
         }
         if l == "}" {
@@ -1311,7 +1451,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
             if ok {
                 emit = Some(format!("print!(\"{f}\"{});", a.iter().map(|x| format!(", {x}")).collect::<String>()));
             }
-        } else if l == "break;" || l == "continue;" {
+        } else if (l == "break;" || l == "continue;") && !(l == "continue;" && !dos.is_empty()) {
             emit = Some(l.to_string());
         } else if let Some(c) = multi.captures(l) {
             let parts = split_args(&c[2]);
