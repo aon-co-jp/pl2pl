@@ -1139,6 +1139,17 @@ fn split_one_liners(src: &str) -> String {
     }
     fn one(l: &str, out: &mut Vec<String>, depth: usize) {
         let t = l.trim();
+        // `case X: 文; 文;` / `default: 文;` を、ラベルの行と文の行に分ける
+        {
+            let lab = Regex::new(r"^(case\s+[^:]+?|default)\s*:\s*(\S.*)$").unwrap();
+            if let Some(c) = lab.captures(t) {
+                out.push(format!("{}:", c[1].trim()));
+                for st in stmts(&c[2]) {
+                    one(&st, out, depth + 1);
+                }
+                return;
+            }
+        }
         // `} else 文;`(波括弧なしの else)
         if let Some(r) = t.strip_prefix("} else ") {
             let r = r.trim();
@@ -1284,6 +1295,10 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
     let mut ret_ty: Option<T> = None;
     let mut stack: Vec<bool> = vec![];
     let mut dos: Vec<usize> = vec![];
+    // switch: (switch の波括弧の深さ, 腕が開いているか, たまったラベル, 直前が break/return か, default があるか, 腕の深さ)
+    let mut sws: Vec<(usize, bool, Vec<String>, bool, bool, usize, bool)> = vec![];
+    let sw_re = Regex::new(r"^switch\s*\((.*)\)\s*\{$").unwrap();
+    let case_re = Regex::new(r"^case\s+(.+?)\s*:$").unwrap();
     let dowhile = Regex::new(r"^\}\s*while\s*\((.*)\)\s*;$").unwrap();
     let mut in_struct = false;
     let mut todo = 0;
@@ -1336,6 +1351,96 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
                 stack.push(is_main);
                 in_main = is_main;
                 ret_ty = rt;
+                continue;
+            }
+        }
+        // ---- switch / case / default ----
+        if let Some(c) = sw_re.captures(l) {
+            if let Some((e, t)) = ex(c[1].trim()).filter(|(_, t)| matches!(t, T::I32 | T::I64 | T::Char)) {
+                out.push_str(&format!("{ind}match {e} {{
+"));
+                stack.push(false);
+                sws.push((stack.len(), false, vec![], false, false, 0, t == T::Char));
+                continue;
+            }
+        }
+        if let Some(sw) = sws.last_mut() {
+            let is_default = l == "default:";
+            let case_c = case_re.captures(l);
+            let at_block = stack.len() == sw.0 || (sw.1 && stack.len() == sw.5);
+            if at_block && (is_default || case_c.is_some()) {
+                if sw.1 {
+                    if !sw.3 {
+                        out.push_str(&format!("{}// TODO(c2rust): 前の case が break なしで次へ抜ける(fallthrough)
+", "    ".repeat(stack.len())));
+                        todo += 1;
+                    }
+                    stack.pop();
+                    out.push_str(&format!("{}}}
+", "    ".repeat(stack.len())));
+                    sw.1 = false;
+                }
+                if is_default {
+                    sw.2.push("_".to_string());
+                    sw.4 = true;
+                } else if let Some(c) = case_c {
+                    let lab = c[1].trim();
+                    let lab = if lab.starts_with('\'') {
+                        if sw.6 {
+                            format!("b{lab}")
+                        } else {
+                            match lab {
+                                "'\\n'" => "10".to_string(),
+                                "'\\t'" => "9".to_string(),
+                                "'\\0'" => "0".to_string(),
+                                _ if lab.chars().count() == 3 => (lab.chars().nth(1).unwrap() as u32).to_string(),
+                                _ => {
+                                    out.push_str(&format!("{}// TODO(c2rust): case {lab}\n", "    ".repeat(stack.len())));
+                                    todo += 1;
+                                    "_".to_string()
+                                }
+                            }
+                        }
+                    } else {
+                        lab.to_string()
+                    };
+                    sw.2.push(lab);
+                }
+                continue;
+            }
+            // ラベルのあとの最初の文: 腕を開く
+            if !sw.1 && !sw.2.is_empty() && l != "}" && stack.len() == sw.0 {
+                let pats = if sw.2.iter().any(|x| x == "_") { "_".to_string() } else { sw.2.join(" | ") };
+                sw.2.clear();
+                out.push_str(&format!("{}{pats} => {{
+", "    ".repeat(stack.len())));
+                stack.push(false);
+                sw.1 = true;
+                sw.5 = stack.len();
+                sw.3 = false;
+            }
+            if sw.1 && stack.len() == sw.5 && (l == "break;") {
+                sw.3 = true;
+                continue;
+            }
+            if sw.1 && stack.len() == sw.5 && l != "break;" && l != "}" {
+                sw.3 = l.starts_with("return");
+            }
+            if l == "}" && ((!sw.1 && stack.len() == sw.0) || (sw.1 && stack.len() == sw.5)) {
+                // switch の終わり
+                if sw.1 {
+                    stack.pop();
+                    out.push_str(&format!("{}}}
+", "    ".repeat(stack.len())));
+                }
+                if !sw.4 {
+                    out.push_str(&format!("{}_ => {{}}
+", "    ".repeat(stack.len())));
+                }
+                stack.pop();
+                out.push_str(&format!("{}}}
+", "    ".repeat(stack.len())));
+                sws.pop();
                 continue;
             }
         }
