@@ -38,3 +38,8 @@ Policy: no new REST (Connect/gRPC), never write secrets, keep unsupported items 
 ## 2026-11-25 追記: MFastAPI は Mojo から使えること / Addendum: MFastAPI must be usable from Mojo
 **日本語**: MFastAPI は **Mojo から使用できる仕様**を保つ(Python 構文・Rust 実装・Mojo 対応、Windows では RMojo の `compat/wsl-bridge` 経由で WSL 上の Mojo を使う)。2MFastAPI の変換結果も Mojo から使えること。現状: `mojo/` は参照実装で、段階B・Cのサーバーは実験的。Mojo からの呼び出しの実機確認は、確認済みの範囲だけを「確認済み」と書く。11:30 まで確認なしで自動で進める。
 **English**: MFastAPI keeps the **specification of being usable from Mojo** (Python syntax, Rust core, Mojo support; on Windows the real Mojo in WSL is driven through RMojo's `compat/wsl-bridge`). Output of 2MFastAPI must be usable from Mojo too. Current state: `mojo/` is a reference implementation and its stage B/C servers are experimental. Only what was actually run is called "verified". Continue automatically without asking until 11:30.
+
+
+## 2026-11-26 追記: pl2pl f2c(単純な Fortran → C) / Added: pl2pl f2c (simple Fortran to C)
+**日本語**: `pl2pl f2c <dir|file> --out <dir>` を追加(program・integer/real・do〈刻み付き〉・if/else・`print *`)。わからない行・配列は `TODO(f2c)` で残しレポートへ。試験2件成功、gcc でビルドし `print *` の整形(整数は幅11)を確認。**未確認**: この WSL に gfortran が無く、本物の gfortran との出力一致は未実施(期待値は gfortran の仕様どおりに合わせただけ)。**未了**: c2f、C↔C++、Rust→C/Fortran、配列・subroutine。
+**English**: Added `pl2pl f2c <dir|file> --out <dir>` (program, integer/real, do with step, if/else, `print *`). Unsupported lines and arrays stay as `TODO(f2c)` and go to the report. 2 tests pass; the output builds with gcc and matches the expected `print *` layout (integers width 11). **Unverified**: this WSL has no gfortran, so equality with real gfortran output was not checked. **Open**: c2f, C to/from C++, Rust to C/Fortran, arrays and subroutines.
