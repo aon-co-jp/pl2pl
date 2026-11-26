@@ -1,6 +1,8 @@
 mod c2rust;
 mod cobol;
 mod f2c;
+mod cxx;
+mod mini;
 mod f2rust;
 mod cport;
 mod gpu;
@@ -30,6 +32,11 @@ const USAGE: &str = "pl2pl — プラットフォーム/HPC 移植コンバー�
                                              COBOL(IBM)+JCL → 選んだ OS の GnuCOBOL(ソースは変えず、検出・ビルド手順・JCL→bash)
   pl2pl c2rust <dir|file> --out <dir>        (最初の一歩)単純な C(変数・if/while/for・関数・printf)→ Rust。わからない行は TODO で残す
   pl2pl f2c <dir|file> --out <dir>           (最初の一歩)単純な Fortran → C。わからない行は TODO で残す
+  pl2pl c2f <dir|file> --out <dir>           (最初の一歩)単純な C(main の中の変数・for・while・if・printf)→ Fortran
+  pl2pl c2cpp <dir|file> --out <dir>         C → C++(ヘッダー・予約語の名前・malloc のキャストを報告)
+  pl2pl cpp2c <dir|file> --out <dir>         (最初の一歩)単純な C++(cout・nullptr・bool)→ C。class 等は TODO で残す
+  pl2pl rust2c <dir|file> --out <dir>        (最初の一歩)単純な Rust(fn main の let・for・while・if・println!)→ C
+  pl2pl rust2f <dir|file> --out <dir>        (最初の一歩)単純な Rust → Fortran
   pl2pl f2rust <dir|file> --out <dir>        (最初の一歩)単純な Fortran(program・integer/real・do・if・print *)→ Rust。わからない行は TODO で残す
   pl2pl cport  <dir|file> --out <dir>        UNIX の C → Windows/Linux で通る C(互換ヘッダー+報告)
   pl2pl omp    <dir|file> --out <dir>        C/C++ の独立ループへ OpenMP 指示行を付ける
@@ -207,6 +214,11 @@ fn main() {
         "cobol" => run(&input, &out, &["cbl", "cob", "cobol", "cpy", "jcl"], &mut rep, cobol::convert),
         "c2rust" => run(&input, &out, &["c", "cpp", "cc", "cxx"], &mut rep, c2rust::convert),
         "f2c" => run(&input, &out, &["f90", "f95", "f03", "f08", "f", "for"], &mut rep, f2c::convert),
+        "c2f" => run(&input, &out, &["c"], &mut rep, mini::c2f),
+        "c2cpp" => run(&input, &out, &["c", "h"], &mut rep, cxx::c2cpp),
+        "cpp2c" => run(&input, &out, &["cpp", "cc", "cxx"], &mut rep, cxx::cpp2c),
+        "rust2c" => run(&input, &out, &["rs"], &mut rep, mini::rust2c),
+        "rust2f" => run(&input, &out, &["rs"], &mut rep, mini::rust2f),
         "f2rust" => run(&input, &out, &["f90", "f95", "f03", "f08", "f", "for"], &mut rep, f2rust::convert),
         "cport" => run(&input, &out, &["c", "h"], &mut rep, cport::convert),
         "kokkos" => run(&input, &out, &["cc", "cpp", "cxx", "hpp"], &mut rep, kokkos::convert),
