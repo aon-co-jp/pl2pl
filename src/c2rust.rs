@@ -1091,6 +1091,64 @@ fn join_multiline(src: &str) -> String {
     out.join("\n")
 }
 
+/// 関数の中の `static int n = 0;` を、ファイル全体の変数 `関数名_n` に移す(Rust の関数内 static は値が変えられないため)。
+fn hoist_static_locals(src: &str) -> String {
+    let st = Regex::new(&format!(r"^static\s+((?:{TYPES}))\s+(\w+)\s*(=\s*[^;]+)?;$")).unwrap();
+    let head = Regex::new(&format!(r"^(?:{TYPES}|void)(?:\s+|\s*\*\s*)(\w+)\s*\(")).unwrap();
+    let lines: Vec<&str> = src.lines().collect();
+    let mut out: Vec<String> = vec![];
+    let mut k = 0;
+    while k < lines.len() {
+        let t = lines[k].trim();
+        if let Some(h) = head.captures(t) {
+            if t.ends_with('{') || (k + 1 < lines.len() && lines[k + 1].trim() == "{") {
+                let fname = h[1].to_string();
+                // 本体の範囲
+                let mut d = 0i32;
+                let mut e = k;
+                let mut seen = false;
+                while e < lines.len() {
+                    let n = lines[e].matches('{').count() as i32 - lines[e].matches('}').count() as i32;
+                    d += n;
+                    if lines[e].contains('{') {
+                        seen = true;
+                    }
+                    if seen && d <= 0 {
+                        break;
+                    }
+                    e += 1;
+                }
+                let e = e.min(lines.len() - 1);
+                let mut hoisted: Vec<String> = vec![];
+                let mut names: Vec<(String, String)> = vec![];
+                let mut body: Vec<String> = vec![];
+                for l in &lines[k..=e] {
+                    if let Some(c) = st.captures(l.trim()) {
+                        let nn = format!("{fname}_{}", &c[2]);
+                        hoisted.push(format!("{} {nn}{};", &c[1], c.get(3).map(|m| format!(" {}", m.as_str())).unwrap_or_default()));
+                        names.push((c[2].to_string(), nn));
+                    } else {
+                        body.push(l.to_string());
+                    }
+                }
+                for (o, n) in &names {
+                    let re = Regex::new(&format!(r"\b{}\b", regex::escape(o))).unwrap();
+                    for b in body.iter_mut() {
+                        *b = re.replace_all(b, n.as_str()).into_owned();
+                    }
+                }
+                out.extend(hoisted);
+                out.extend(body);
+                k = e + 1;
+                continue;
+            }
+        }
+        out.push(lines[k].to_string());
+        k += 1;
+    }
+    out.join("\n")
+}
+
 fn strip_block_comments(src: &str) -> String {
     let b: Vec<char> = src.chars().collect();
     let (mut o, mut i, mut q) = (String::new(), 0, false);
@@ -1673,7 +1731,7 @@ fn rewrite_ptr_params(src: &str) -> String {
 }
 
 pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, String)> {
-    let src_owned = rewrite_ptr_params(&split_one_liners(&join_multiline(&expand_enums(&expand_typedef_structs(&expand_fn_macros(&strip_block_comments(src)))))));
+    let src_owned = rewrite_ptr_params(&hoist_static_locals(&split_one_liners(&join_multiline(&expand_enums(&expand_typedef_structs(&expand_fn_macros(&strip_block_comments(src))))))));
     let src: &str = &src_owned;
     let func = Regex::new(&format!(r"^({TYPES}|void)(?:\s+|\s*(\*)\s*)(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)\s*\{{?\s*$")).unwrap();
     let multi = Regex::new(&format!(r"^({TYPES})\s+(.+);$")).unwrap();
