@@ -678,3 +678,6 @@ Code that uses pointers becomes `unsafe`; turning it into safe Rust is left to a
 
 
 - 2026-11-27 c2rust: 構造体・`char` の `**` 引数に対応(structpp・charpp が gcc と一致)。/ c2rust: `**` on structs and `char` supported (structpp, charpp match gcc).
+
+
+- 2026-11-27 c2rust: 構造体配列の `qsort`(`(const struct P *)a` 形の比較関数)、構造体の関数ポインター欄(`int (*f)(int,int);` と `s.f(a,b)`、Default は呼ぶと止まる空の関数で補う)、関数ポインター配列(`int (*tab[2])(int,int) = {add, mul};`)に対応。サンプル qsortstruct・fnptrfield が gcc と一致。/ c2rust: `qsort` on struct arrays, function-pointer struct fields (calls `s.f(a,b)`; Default filled with a panicking stub) and local arrays of function pointers are supported; samples qsortstruct and fnptrfield match gcc.

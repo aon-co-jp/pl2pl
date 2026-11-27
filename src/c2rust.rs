@@ -580,6 +580,29 @@ impl Px {
                 };
                 t = STRUCTS.with(|m| m.borrow().get(&sname).and_then(|fs| fs.iter().find(|(n, _)| *n == f).map(|x| x.1.clone())))?;
                 e = format!("{e}.{f}");
+            } else if self.peek() == Some("(") && matches!(t, T::Fn(..)) {
+                // 構造体の欄・配列の要素になった関数ポインターの呼び出し: s.f(a, b)・tab[i](a)
+                let T::Fn(ps, r) = t.clone() else { return None };
+                self.i += 1;
+                let mut args = vec![];
+                if !self.eat(")") {
+                    loop {
+                        let a = self.expr(0)?;
+                        let pt = ps.get(args.len())?;
+                        args.push(coerce(&a.0, &a.1, pt)?);
+                        if self.eat(")") {
+                            break;
+                        }
+                        if !self.eat(",") {
+                            return None;
+                        }
+                    }
+                }
+                if args.len() != ps.len() {
+                    return None;
+                }
+                e = format!("({e})({})", args.join(", "));
+                t = r.map(|b| *b).unwrap_or(T::I32);
             } else {
                 return Some((e, t));
             }
@@ -1167,7 +1190,7 @@ fn rewrite_void_cmp(src: &str) -> String {
     for (k, l) in lines.iter().enumerate() {
         let Some(c) = head.captures(l.trim()) else { continue };
         let (a, b) = (c[3].to_string(), c[4].to_string());
-        let cast = Regex::new(&format!(r"\*\s*\(\s*(?:const\s+)?(\w+)\s*\*\s*\)\s*{}\b", regex::escape(&a))).unwrap();
+        let cast = Regex::new(&format!(r"\*?\s*\(\s*(?:const\s+)?(struct\s+\w+|\w+)\s*\*\s*\)\s*{}\b", regex::escape(&a))).unwrap();
         let mut end = k;
         let mut d = 0i32;
         while end < lines.len() {
@@ -1180,14 +1203,17 @@ fn rewrite_void_cmp(src: &str) -> String {
         let end = end.min(lines.len() - 1);
         let body = lines[k..=end].join("\n");
         let Some(m) = cast.captures(&body) else { continue };
-        let ty = m[1].to_string();
+        let ty = m[1].split_whitespace().collect::<Vec<_>>().join(" ");
         out[k] = l.replacen(&format!("void *{a}"), &format!("{ty} *{a}"), 1).replacen("const ", "", 1);
         out[k] = out[k].replace(&format!("void *{b}"), &format!("{ty} *{b}")).replace("const ", "");
         for j in k + 1..=end {
             let mut t = out[j].clone();
             for v in [&a, &b] {
-                let re = Regex::new(&format!(r"\*\s*\(\s*(?:const\s+)?{ty}\s*\*\s*\)\s*{}\b", regex::escape(v))).unwrap();
+                let tyre = regex::escape(&ty).replace(' ', r"\s+");
+                let re = Regex::new(&format!(r"\*\s*\(\s*(?:const\s+)?{tyre}\s*\*\s*\)\s*{}\b", regex::escape(v))).unwrap();
                 t = re.replace_all(&t, format!("*{v}").as_str()).into_owned();
+                let re = Regex::new(&format!(r"\(\s*(?:const\s+)?{tyre}\s*\*\s*\)\s*{}\b", regex::escape(v))).unwrap();
+                t = re.replace_all(&t, v.as_str()).into_owned();
             }
             out[j] = t;
         }
@@ -1806,7 +1832,8 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
     let whl = Regex::new(r"^while\s*\((.*)\)\s*\{$").unwrap();
     let call = Regex::new(r"^(printf|puts)\s*\((.*)\)\s*;$").unwrap();
     let fpr = Regex::new(r"^fprintf\s*\((.*)\)\s*;$").unwrap();
-    let fnptr_decl = Regex::new(r"^(.+?\)\s*\([^)]*\))\s*=\s*(.+);$").unwrap();
+    let fnptr_arr = Regex::new(r"^(\w+)\s*\(\s*\*\s*(\w+)\s*\[\s*(\w+)\s*\]\s*\)\s*\(([^)]*)\)\s*=\s*\{(.*)\}\s*;$").unwrap();
+    let fnptr_decl =Regex::new(r"^(.+?\)\s*\([^)]*\))\s*=\s*(.+);$").unwrap();
     let qsort_re = Regex::new(r"^qsort\s*\((.*)\)\s*;$").unwrap();
     let sprintf_re = Regex::new(r"^(?:sn|s)printf\s*\((.*)\)\s*;$").unwrap();
     let scanf_re = Regex::new(r"^scanf\s*\((.*)\)\s*;$").unwrap();
@@ -1851,6 +1878,8 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
                     let (n, fs) = (n.clone(), std::mem::take(fs));
                     STRUCTS.with(|m| m.borrow_mut().insert(n, fs));
                     cur = None;
+                } else if let Some((fnm, ft)) = fnptr(l.trim_end_matches(';')).filter(|_| l.ends_with(';')) {
+                    fs.push((fnm, ft));
                 } else if let Some(c) = field.captures(l) {
                     if c.get(2).is_some() {
                         // ポインター欄(`struct Node *next;`・`char *name;`)は生ポインター。構造体を指すものがある構造体は「連結型」
@@ -1913,12 +1942,26 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
         }
         if let Some(c) = sdef.captures(l) {
             if let Some(fs) = STRUCTS.with(|m| m.borrow().get(&c[1]).cloned()) {
-                let derive = if fs.iter().any(|(_, t)| matches!(t, T::Raw(_))) { "#[derive(Clone, Copy, Debug)]" } else { "#[derive(Clone, Copy, Default, Debug)]" };
+                let has_fn = fs.iter().any(|(_, t)| matches!(t, T::Fn(..)));
+                let has_raw = fs.iter().any(|(_, t)| matches!(t, T::Raw(_)));
+                let derive = if has_raw || has_fn { "#[derive(Clone, Copy, Debug)]" } else { "#[derive(Clone, Copy, Default, Debug)]" };
                 out.push_str(&format!("{derive}\nstruct {} {{\n", &c[1]));
-                for (n, t) in fs {
-                    out.push_str(&format!("    {n}: {},\n", rs(&t)));
+                for (n, t) in fs.iter() {
+                    out.push_str(&format!("    {n}: {},\n", rs(t)));
                 }
                 out.push_str("}\n\n");
+                if has_fn && !has_raw {
+                    // 関数ポインターは Default を持たないので、呼ぶと止まる空の関数で埋める
+                    out.push_str(&format!("impl Default for {} {{\n    fn default() -> Self {{\n        {} {{\n", &c[1], &c[1]));
+                    for (n, t) in fs.iter() {
+                        if matches!(t, T::Fn(..)) {
+                            out.push_str(&format!("            {n}: |{}| panic!(\"null function pointer\"),\n", vec!["_"; if let T::Fn(p, _) = t { p.len() } else { 0 }].join(", ")));
+                        } else {
+                            out.push_str(&format!("            {n}: Default::default(),\n"));
+                        }
+                    }
+                    out.push_str("        }\n    }\n}\n\n");
+                }
                 in_struct = true;
                 continue;
             }
@@ -2148,6 +2191,17 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
                     },
                 });
             }
+        } else if let Some(c) = fnptr_arr.captures(l) {
+            // int (*tab[2])(int, int) = {add, mul};  →  let mut tab: [fn(i32, i32) -> i32; 2] = [add, mul];
+            let n: Option<usize> = c[3].parse().ok().or_else(|| ex(&c[3]).and_then(|x| x.0.parse().ok()));
+            if let (Some((nm, T::Fn(ps, r))), Some(n)) = (fnptr(&format!("{} (*{})({})", &c[1], &c[2], &c[4])), n) {
+                let ft = T::Fn(ps, r);
+                let items: Vec<String> = split_args(&c[5]).iter().filter_map(|a| ex(a.trim()).and_then(|(e, t)| coerce(&e, &t, &ft))).collect();
+                if items.len() == n {
+                    emit = Some(format!("let mut {nm}: [{}; {n}] = [{}];", rs(&ft), items.join(", ")));
+                    set_var(&nm, T::Arr(Box::new(ft), n));
+                }
+            }
         } else if let Some(c) = fnptr_decl.captures(l) {
             // int (*g)(int) = sq;  →  let mut g: fn(i32) -> i32 = sq;
             if let (Some((n, t)), Some((e, _))) = (fnptr(&c[1]), ex(c[2].trim())) {
@@ -2159,7 +2213,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
             let parts = split_args(&c[1]);
             if parts.len() == 4 && FUNCS.with(|m| m.borrow().contains_key(parts[3].trim())) {
                 if let (Some((arr, at)), Some((n, _))) = (ex(parts[0].trim()), ex(parts[1].trim())) {
-                    if matches!(&at, T::Arr(el, _) | T::Slice(el) if matches!(**el, T::I32 | T::I64 | T::F64 | T::F32)) {
+                    if matches!(&at, T::Arr(el, _) | T::Slice(el) if matches!(**el, T::I32 | T::I64 | T::F64 | T::F32 | T::St(_))) {
                         let cf = parts[3].trim();
                         emit = Some(format!("{arr}[..({n}) as usize].sort_by(|x, y| {{ let mut x = *x; let mut y = *y; ({cf}(&mut x, &mut y) as i64).cmp(&0) }});"));
                     }
