@@ -677,3 +677,6 @@ Code that uses pointers becomes `unsafe`; turning it into safe Rust is left to a
 
 - 2026-11-27 c2rust: 数値型の `int **pp` 引数(`*pp = t;`、呼び出し `f(&q, &b)`)に対応(生ポインターのポインター)。サンプル ptrptr が gcc と一致。構造体・char の `**` は未対応。/ c2rust: numeric `T **` parameters are supported as raw pointer-to-pointer; sample ptrptr matches gcc. `**` on structs/char is not yet.
 
+
+
+- 2026-11-27 c2rust: 構造体・`char` の `**` 引数に対応(structpp・charpp が gcc と一致)。/ c2rust: `**` on structs and `char` supported (structpp, charpp match gcc).
