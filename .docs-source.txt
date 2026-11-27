@@ -1,3 +1,3 @@
 source: aon-co-jp/pl2pl
-commit: 5825d64b671f2233d3a4c59bb9dd76990ad68e69
-updated: 2026-11-27T05:37:21Z
+commit: 62230ab822dba8cef4307afa671602e0772c6f96
+updated: 2026-11-27T06:05:52Z
