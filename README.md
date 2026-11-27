@@ -669,3 +669,6 @@ Code that uses pointers becomes `unsafe`; turning it into safe Rust is left to a
 
 - 2026-11-27 c2rust: 1行の `for (struct Node *p = head; p; p = p->next) stmt;` を一般形の for として変換し(split_one_liners を2回通す)、変換できないブロックの開きと対応する `}` を両方 TODO にして括弧の数を保つ。連結リストのサンプル linkedlist が gcc と一致。/ c2rust: one-line general `for` loops are now converted (two split passes), and an unconvertible block opener and its `}` are both left as TODO so braces stay balanced; sample linkedlist (malloc'd linked list) matches gcc.
 
+
+- 2026-11-27 c2rust: 連結型の構造体を値で宣言(`struct Node a;`)したときの初期値を `zeroed()` にして変換。サンプル structval が gcc と一致。/ c2rust: by-value declaration of a linked struct now initializes with `zeroed()`; sample structval matches gcc.
+

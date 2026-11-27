@@ -57,6 +57,7 @@ fn zero(t: &T) -> String {
         T::F32 | T::F64 => "0.0".into(),
         T::Bool => "false".into(),
         T::Arr(e, n) => format!("[{}; {n}]", zero(e)),
+        T::St(s) if is_raw_struct(t) => "unsafe { std::mem::zeroed() }".into(),
         T::St(s) => format!("{s}::default()"),
         _ => "Default::default()".into(),
     }
