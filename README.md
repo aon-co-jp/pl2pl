@@ -662,3 +662,6 @@ Code that uses pointers becomes `unsafe`; turning it into safe Rust is left to a
 
 - 2026-11-27 c2rust: 関数内の `static` 変数を、ファイル全体の変数 `関数名_変数名` に移して変換(`hoist_static_locals`)。サンプル staticlocal が gcc と一致。/ c2rust: function-local `static` variables are hoisted to file-level `func_name` globals; sample staticlocal matches gcc.
 
+
+- 2026-11-27 c2rust: `qsort(v, n, sizeof(T), cmp)`(int/long/double/float の配列、比較関数は `*(const T *)a` を使う形)を `sort_by` に変換。サンプル qsort が gcc と一致。それ以外の `void *` は未対応。/ c2rust: `qsort` on int/long/double/float arrays with the usual comparator is converted to `sort_by`; sample qsort matches gcc. Other `void *` uses are still unsupported.
+
