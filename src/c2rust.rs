@@ -1149,6 +1149,42 @@ fn hoist_static_locals(src: &str) -> String {
     out.join("\n")
 }
 
+/// qsort の比較関数 `int cmp(const void *a, const void *b)` の `void *` を、本体の `*(const T *)a` から分かる型へ直す。
+fn rewrite_void_cmp(src: &str) -> String {
+    let head = Regex::new(r"^(int)\s+(\w+)\s*\(\s*(?:const\s+)?void\s*\*\s*(\w+)\s*,\s*(?:const\s+)?void\s*\*\s*(\w+)\s*\)\s*\{?\s*$").unwrap();
+    let lines: Vec<&str> = src.lines().collect();
+    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    for (k, l) in lines.iter().enumerate() {
+        let Some(c) = head.captures(l.trim()) else { continue };
+        let (a, b) = (c[3].to_string(), c[4].to_string());
+        let cast = Regex::new(&format!(r"\*\s*\(\s*(?:const\s+)?(\w+)\s*\*\s*\)\s*{}\b", regex::escape(&a))).unwrap();
+        let mut end = k;
+        let mut d = 0i32;
+        while end < lines.len() {
+            d += lines[end].matches('{').count() as i32 - lines[end].matches('}').count() as i32;
+            if d <= 0 && lines[end].contains('}') {
+                break;
+            }
+            end += 1;
+        }
+        let end = end.min(lines.len() - 1);
+        let body = lines[k..=end].join("\n");
+        let Some(m) = cast.captures(&body) else { continue };
+        let ty = m[1].to_string();
+        out[k] = l.replacen(&format!("void *{a}"), &format!("{ty} *{a}"), 1).replacen("const ", "", 1);
+        out[k] = out[k].replace(&format!("void *{b}"), &format!("{ty} *{b}")).replace("const ", "");
+        for j in k + 1..=end {
+            let mut t = out[j].clone();
+            for v in [&a, &b] {
+                let re = Regex::new(&format!(r"\*\s*\(\s*(?:const\s+)?{ty}\s*\*\s*\)\s*{}\b", regex::escape(v))).unwrap();
+                t = re.replace_all(&t, format!("*{v}").as_str()).into_owned();
+            }
+            out[j] = t;
+        }
+    }
+    out.join("\n")
+}
+
 fn strip_block_comments(src: &str) -> String {
     let b: Vec<char> = src.chars().collect();
     let (mut o, mut i, mut q) = (String::new(), 0, false);
@@ -1731,7 +1767,7 @@ fn rewrite_ptr_params(src: &str) -> String {
 }
 
 pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, String)> {
-    let src_owned = rewrite_ptr_params(&hoist_static_locals(&split_one_liners(&join_multiline(&expand_enums(&expand_typedef_structs(&expand_fn_macros(&strip_block_comments(src))))))));
+    let src_owned = rewrite_ptr_params(&rewrite_void_cmp(&hoist_static_locals(&split_one_liners(&join_multiline(&expand_enums(&expand_typedef_structs(&expand_fn_macros(&strip_block_comments(src)))))))));
     let src: &str = &src_owned;
     let func = Regex::new(&format!(r"^({TYPES}|void)(?:\s+|\s*(\*)\s*)(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)\s*\{{?\s*$")).unwrap();
     let multi = Regex::new(&format!(r"^({TYPES})\s+(.+);$")).unwrap();
@@ -1743,6 +1779,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
     let call = Regex::new(r"^(printf|puts)\s*\((.*)\)\s*;$").unwrap();
     let fpr = Regex::new(r"^fprintf\s*\((.*)\)\s*;$").unwrap();
     let fnptr_decl = Regex::new(r"^(.+?\)\s*\([^)]*\))\s*=\s*(.+);$").unwrap();
+    let qsort_re = Regex::new(r"^qsort\s*\((.*)\)\s*;$").unwrap();
     let sprintf_re = Regex::new(r"^(?:sn|s)printf\s*\((.*)\)\s*;$").unwrap();
     let scanf_re = Regex::new(r"^scanf\s*\((.*)\)\s*;$").unwrap();
     let cout = Regex::new(r"^(?:std::)?cout\s*<<\s*(.*);$").unwrap();
@@ -2081,6 +2118,17 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
             if let (Some((n, t)), Some((e, _))) = (fnptr(&c[1]), ex(c[2].trim())) {
                 emit = Some(format!("let mut {n}: {} = {e};", rs(&t)));
                 set_var(&n, t);
+            }
+        } else if let Some(c) = qsort_re.captures(l) {
+            // qsort(v, n, sizeof(T), cmp);  →  v[..n].sort_by(...) で比較関数を呼ぶ
+            let parts = split_args(&c[1]);
+            if parts.len() == 4 && FUNCS.with(|m| m.borrow().contains_key(parts[3].trim())) {
+                if let (Some((arr, at)), Some((n, _))) = (ex(parts[0].trim()), ex(parts[1].trim())) {
+                    if matches!(&at, T::Arr(el, _) | T::Slice(el) if matches!(**el, T::I32 | T::I64 | T::F64 | T::F32)) {
+                        let cf = parts[3].trim();
+                        emit = Some(format!("{arr}[..({n}) as usize].sort_by(|x, y| {{ let mut x = *x; let mut y = *y; ({cf}(&mut x, &mut y) as i64).cmp(&0) }});"));
+                    }
+                }
             }
         } else if let Some(c) = sprintf_re.captures(l) {
             // sprintf(buf, "...", 引数...) → c_sprintf(buf, &format!(...))
