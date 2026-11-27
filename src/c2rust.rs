@@ -1688,12 +1688,19 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
     let dowhile = Regex::new(r"^\}\s*while\s*\((.*)\)\s*;$").unwrap();
     let mut in_struct = false;
     let mut todo = 0;
+    let mut skip_fn = 0i32;
     for (i, raw) in src.lines().enumerate() {
         let l = strip_comment(raw).trim();
         if l.is_empty() || l.starts_with("#include") || l.starts_with("using namespace") {
             continue;
         }
         take_unsafe();
+        if skip_fn > 0 {
+            out.push_str(&format!("// TODO(c2rust): {l}\n"));
+            skip_fn += l.matches('{').count() as i32 - l.matches('}').count() as i32;
+            todo += 1;
+            continue;
+        }
         let ind = "    ".repeat(stack.len());
         if let Some(c) = define.captures(l) {
             if let Some((e, t)) = ex(&c[2]).filter(|(_, t)| is_num(t)) {
@@ -1723,6 +1730,12 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
         if let Some(c) = func.captures(l) {
             let ps = c[4].trim();
             let pv: Option<Vec<(String, T)>> = if ps.is_empty() || ps == "void" { Some(vec![]) } else { ps.split(',').map(param).collect() };
+            if pv.is_none() && stack.is_empty() && l.ends_with('{') {
+                out.push_str(&format!("// TODO(c2rust): {l}\n"));
+                skip_fn = 1;
+                todo += 1;
+                continue;
+            }
             if let Some(pv) = pv {
                 let is_main = &c[3] == "main";
                 let rt = ret_of(&c);
