@@ -238,6 +238,7 @@ fn coerce(e: &str, from: &T, to: &T) -> Option<String> {
         (T::Null, T::Raw(_)) => return Some("std::ptr::null_mut()".into()),
         (T::Arr(a, _) | T::Slice(a), T::Raw(b)) if a == b => return Some(format!("{e}.as_mut_ptr()")),
         (T::Ptr(a), T::Raw(b)) if a == b => return Some(format!("({e} as *mut {})", rs(b))),
+        (T::Ptr(a), T::Raw(b)) if matches!((&**a, &**b), (T::Ptr(x), T::Raw(y)) if x == y) => return Some(format!("({e} as *mut {} as *mut {})", rs(a), rs(b))),
         (T::Raw(_), T::Raw(b)) => return Some(format!("({e} as *mut {})", rs(b))),
         (T::Raw(a), T::Ptr(b)) if a == b => {
             mark();
@@ -926,6 +927,14 @@ fn param(p: &str) -> Option<(String, T)> {
         return Some(r);
     }
     let re = Regex::new(&format!(r"^({TYPES})(?:\s+|\s*(\*)\s*)(\w+)((?:\s*\[\s*\w*\s*\])*)$")).unwrap();
+    let re2 = Regex::new(&format!(r"^({TYPES})\s*\*\s*\*\s*(\w+)$")).unwrap();
+    if let Some(c) = re2.captures(p.trim()) {
+        let b = base_ty(&c[1])?;
+        if matches!(b, T::I32 | T::I64 | T::F64 | T::F32) {
+            return Some((c[2].to_string(), T::Raw(Box::new(T::Raw(Box::new(b))))));
+        }
+        return None;
+    }
     let c = re.captures(p.trim())?;
     let b = base_ty(&c[1])?;
     let ds = dims(&c[4])?;
