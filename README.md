@@ -665,3 +665,6 @@ Code that uses pointers becomes `unsafe`; turning it into safe Rust is left to a
 
 - 2026-11-27 c2rust: `qsort(v, n, sizeof(T), cmp)`(int/long/double/float の配列、比較関数は `*(const T *)a` を使う形)を `sort_by` に変換。サンプル qsort が gcc と一致。それ以外の `void *` は未対応。/ c2rust: `qsort` on int/long/double/float arrays with the usual comparator is converted to `sort_by`; sample qsort matches gcc. Other `void *` uses are still unsupported.
 
+
+- 2026-11-27 c2rust: 1行に書いた `struct P { char name[16]; int age; };` を欄ごとに開いて変換(`expand_oneline_struct`)。構造体配列と文字列関数のサンプル structarr が gcc と一致。/ c2rust: a one-line `struct` definition is expanded per field; sample structarr (struct array plus string functions) matches gcc.
+
