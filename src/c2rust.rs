@@ -28,6 +28,7 @@ enum T {
     File,
     Raw(Box<T>),
     Null,
+    Fn(Vec<T>, Option<Box<T>>),
 }
 
 fn rs(t: &T) -> String {
@@ -45,6 +46,7 @@ fn rs(t: &T) -> String {
         T::File => "CFile".into(),
         T::Raw(e) => format!("*mut {}", rs(e)),
         T::Null => "*mut u8".into(),
+        T::Fn(ps, r) => format!("fn({}){}", ps.iter().map(rs).collect::<Vec<_>>().join(", "), r.as_ref().map(|t| format!(" -> {}", rs(t))).unwrap_or_default()),
     }
 }
 
@@ -655,7 +657,13 @@ impl Px {
             return None;
         }
         if self.eat("(") {
-            let (ps, ret) = FUNCS.with(|m| m.borrow().get(&tk).cloned())?;
+            let (ps, ret) = match FUNCS.with(|m| m.borrow().get(&tk).cloned()) {
+                Some(x) => x,
+                None => match var(&tk)? {
+                    T::Fn(ps, r) => (ps, r.map(|b| *b)),
+                    _ => return None,
+                },
+            };
             let mut args = vec![];
             if !self.eat(")") {
                 loop {
@@ -697,6 +705,11 @@ impl Px {
                 }
             }
             return Some((format!("{fname}({})", args.join(", ")), ret.unwrap_or(T::I32)));
+        }
+        if var(&tk).is_none() {
+            if let Some((ps, r)) = FUNCS.with(|m| m.borrow().get(&tk).cloned()) {
+                return Some((tk.clone(), T::Fn(ps, r.map(Box::new))));
+            }
         }
         let t = var(&tk)?;
         // 大域変数は `G_名前`(Rust は let で static を隠せないので、名前を分ける)
@@ -891,7 +904,26 @@ fn wrap(base: T, ds: &[Option<usize>]) -> Option<T> {
 const TYPES: &str = r"struct\s+\w+|long\s+long|unsigned\s+int|unsigned\s+char|int|long|double|float|short|unsigned|char|FILE";
 
 /// 関数の引数 1 つ: (名前, 型)
+fn fnptr(p: &str) -> Option<(String, T)> {
+    let re = Regex::new(&format!(r"^({TYPES}|void)\s*\(\s*\*\s*(\w+)\s*\)\s*\(([^)]*)\)$")).unwrap();
+    let c = re.captures(p.trim())?;
+    let ret = if &c[1] == "void" { None } else { Some(Box::new(base_ty(&c[1])?)) };
+    let ps = c[3].trim();
+    let mut v = vec![];
+    if !(ps.is_empty() || ps == "void") {
+        for a in split_args(ps) {
+            let a = a.trim();
+            // 名前の無い型だけ(`int`)も、名前つき(`int x`)も受ける
+            v.push(match base_ty(a) { Some(t) => t, None => param(a)?.1 });
+        }
+    }
+    Some((c[2].to_string(), T::Fn(v, ret)))
+}
+
 fn param(p: &str) -> Option<(String, T)> {
+    if let Some(r) = fnptr(p) {
+        return Some(r);
+    }
     let re = Regex::new(&format!(r"^({TYPES})(?:\s+|\s*(\*)\s*)(\w+)((?:\s*\[\s*\w*\s*\])*)$")).unwrap();
     let c = re.captures(p.trim())?;
     let b = base_ty(&c[1])?;
@@ -1643,7 +1675,7 @@ fn rewrite_ptr_params(src: &str) -> String {
 pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, String)> {
     let src_owned = rewrite_ptr_params(&split_one_liners(&join_multiline(&expand_enums(&expand_typedef_structs(&expand_fn_macros(&strip_block_comments(src)))))));
     let src: &str = &src_owned;
-    let func = Regex::new(&format!(r"^({TYPES}|void)(?:\s+|\s*(\*)\s*)(\w+)\s*\(([^)]*)\)\s*\{{?\s*$")).unwrap();
+    let func = Regex::new(&format!(r"^({TYPES}|void)(?:\s+|\s*(\*)\s*)(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)\s*\{{?\s*$")).unwrap();
     let multi = Regex::new(&format!(r"^({TYPES})\s+(.+);$")).unwrap();
     let define = Regex::new(r"^#define\s+(\w+)\s+(.+)$").unwrap();
     let sdef = Regex::new(r"^struct\s+(\w+)\s*\{$").unwrap();
@@ -1652,6 +1684,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
     let whl = Regex::new(r"^while\s*\((.*)\)\s*\{$").unwrap();
     let call = Regex::new(r"^(printf|puts)\s*\((.*)\)\s*;$").unwrap();
     let fpr = Regex::new(r"^fprintf\s*\((.*)\)\s*;$").unwrap();
+    let fnptr_decl = Regex::new(r"^(.+?\)\s*\([^)]*\))\s*=\s*(.+);$").unwrap();
     let sprintf_re = Regex::new(r"^(?:sn|s)printf\s*\((.*)\)\s*;$").unwrap();
     let scanf_re = Regex::new(r"^scanf\s*\((.*)\)\s*;$").unwrap();
     let cout = Regex::new(r"^(?:std::)?cout\s*<<\s*(.*);$").unwrap();
@@ -1713,7 +1746,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
             }
             if let Some(c) = func.captures(l) {
                 let ps = c[4].trim();
-                let pv: Option<Vec<T>> = if ps.is_empty() || ps == "void" { Some(vec![]) } else { ps.split(',').map(|p| param(p).map(|x| x.1)).collect() };
+                let pv: Option<Vec<T>> = if ps.is_empty() || ps == "void" { Some(vec![]) } else { split_args(ps).iter().map(|p| param(p).map(|x| x.1)).collect() };
                 if let Some(pv) = pv {
                     FUNCS.with(|m| m.borrow_mut().insert(c[3].to_string(), (pv, ret_of(&c))));
                     ALIAS.with(|m| m.borrow_mut().remove(&c[3]));
@@ -1774,7 +1807,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
         }
         if let Some(c) = func.captures(l) {
             let ps = c[4].trim();
-            let pv: Option<Vec<(String, T)>> = if ps.is_empty() || ps == "void" { Some(vec![]) } else { ps.split(',').map(param).collect() };
+            let pv: Option<Vec<(String, T)>> = if ps.is_empty() || ps == "void" { Some(vec![]) } else { split_args(ps).iter().map(|p| param(p)).collect() };
             if pv.is_none() && stack.is_empty() && l.ends_with('{') {
                 out.push_str(&format!("// TODO(c2rust): {l}\n"));
                 skip_fn = 1;
@@ -1984,6 +2017,12 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
                         _ => None,
                     },
                 });
+            }
+        } else if let Some(c) = fnptr_decl.captures(l) {
+            // int (*g)(int) = sq;  →  let mut g: fn(i32) -> i32 = sq;
+            if let (Some((n, t)), Some((e, _))) = (fnptr(&c[1]), ex(c[2].trim())) {
+                emit = Some(format!("let mut {n}: {} = {e};", rs(&t)));
+                set_var(&n, t);
             }
         } else if let Some(c) = sprintf_re.captures(l) {
             // sprintf(buf, "...", 引数...) → c_sprintf(buf, &format!(...))
