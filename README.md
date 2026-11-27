@@ -656,3 +656,6 @@ Code that uses pointers becomes `unsafe`; turning it into safe Rust is left to a
 
 - 2026-11-27 c2rust: 丸括弧をまたぐ複数行の文(printf・関数宣言・呼び出し)を1行につないで変換(`join_multiline`)。サンプル multiline が gcc と一致。/ c2rust: statements spanning lines inside parentheses are joined first; sample multiline matches gcc.
 
+
+- 2026-11-27 c2rust: 関数ポインター(引数 `int (*f)(int)`・ローカル `int (*g)(int) = sq;`・`f(v)` 呼び出し・関数名を値として渡す)に対応(`T::Fn`)。サンプル fnptr が gcc と一致。構造体の欄・配列・qsort の比較関数は未対応。/ c2rust: function pointers (parameters, locals, calls, passing a function by name) are supported via `T::Fn`; sample fnptr matches gcc. Struct fields, arrays of them and qsort comparators are not yet.
+
