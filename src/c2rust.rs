@@ -94,6 +94,9 @@ thread_local! {
     static DEFINES: RefCell<HashMap<String, String>> = Default::default();
     static UNSAFE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     // 関数の外の変数(`static mut`)。MASTER は全部、ACTIVE は今の関数で局所変数に隠されていないもの
+    // 他の構造体(自分を含む)へのポインター欄を持つ構造体と、それに指される構造体(連結リストなど)。
+    // これらへのポインターは `&mut` ではなく生ポインター(`*mut`)で表す
+    static RAWSTRUCTS: RefCell<std::collections::HashSet<String>> = Default::default();
     static GLOB_MASTER: RefCell<std::collections::HashSet<String>> = Default::default();
     static GLOB_ACTIVE: RefCell<std::collections::HashSet<String>> = Default::default();
 }
@@ -196,6 +199,9 @@ fn unescape_len(s: &str) -> usize {
     n
 }
 
+fn is_raw_struct(t: &T) -> bool {
+    matches!(t, T::St(n) if RAWSTRUCTS.with(|r| r.borrow().contains(n)))
+}
 fn var(n: &str) -> Option<T> {
     let r = VARS.with(|v| v.borrow().get(n).cloned());
     if r.is_some() && GLOB_ACTIVE.with(|g| g.borrow().contains(n)) {
@@ -893,7 +899,7 @@ fn param(p: &str) -> Option<(String, T)> {
         if !ds.is_empty() {
             return None;
         }
-        if matches!(b, T::Char | T::File) { T::Raw(Box::new(b)) } else { T::Ptr(Box::new(b)) }
+        if matches!(b, T::Char | T::File) || is_raw_struct(&b) { T::Raw(Box::new(b)) } else { T::Ptr(Box::new(b)) }
     } else if ds.is_empty() {
         b
     } else {
@@ -1560,6 +1566,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
     let callst = Regex::new(r"^\w+\s*\(.*\)\s*;$").unwrap();
     VARS.with(|v| v.borrow_mut().clear());
     GLOB_MASTER.with(|g| g.borrow_mut().clear());
+    RAWSTRUCTS.with(|g| g.borrow_mut().clear());
     GLOB_ACTIVE.with(|g| g.borrow_mut().clear());
     STRUCTS.with(|v| v.borrow_mut().clear());
     FUNCS.with(|v| v.borrow_mut().clear());
@@ -1577,7 +1584,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
     // 先に #define・構造体・関数の形を集める(定義の順番によらず呼べるように)
     {
         let mut cur: Option<(String, Vec<(String, T)>)> = None;
-        let field = Regex::new(&format!(r"^({TYPES})\s+(\w+)((?:\s*\[\s*\w+\s*\])*)\s*;$")).unwrap();
+        let field = Regex::new(&format!(r"^({TYPES})(?:\s+|\s*(\*)\s*)(\w+)((?:\s*\[\s*\w+\s*\])*)\s*;$")).unwrap();
         for raw in src.lines() {
             let l = strip_comment(raw).trim();
             if let Some(c) = define.captures(l) {
@@ -1595,8 +1602,17 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
                     STRUCTS.with(|m| m.borrow_mut().insert(n, fs));
                     cur = None;
                 } else if let Some(c) = field.captures(l) {
-                    if let Some(t) = base_ty(&c[1]).and_then(|b| wrap(b, &dims(&c[3])?)) {
-                        fs.push((c[2].to_string(), t));
+                    if c.get(2).is_some() {
+                        // ポインター欄(`struct Node *next;`・`char *name;`)は生ポインター。構造体を指すものがある構造体は「連結型」
+                        if let Some(b) = base_ty(&c[1]) {
+                            if let T::St(sn) = &b {
+                                RAWSTRUCTS.with(|r| r.borrow_mut().insert(n.clone()));
+                                RAWSTRUCTS.with(|r| r.borrow_mut().insert(sn.clone()));
+                            }
+                            fs.push((c[3].to_string(), T::Raw(Box::new(b))));
+                        }
+                    } else if let Some(t) = base_ty(&c[1]).and_then(|b| wrap(b, &dims(&c[4])?)) {
+                        fs.push((c[3].to_string(), t));
                     }
                 }
                 continue;
@@ -1639,7 +1655,8 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
         }
         if let Some(c) = sdef.captures(l) {
             if let Some(fs) = STRUCTS.with(|m| m.borrow().get(&c[1]).cloned()) {
-                out.push_str(&format!("#[derive(Clone, Copy, Default, Debug)]\nstruct {} {{\n", &c[1]));
+                let derive = if fs.iter().any(|(_, t)| matches!(t, T::Raw(_))) { "#[derive(Clone, Copy, Debug)]" } else { "#[derive(Clone, Copy, Default, Debug)]" };
+                out.push_str(&format!("{derive}\nstruct {} {{\n", &c[1]));
                 for (n, t) in fs {
                     out.push_str(&format!("    {n}: {},\n", rs(&t)));
                 }
