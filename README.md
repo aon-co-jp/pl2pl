@@ -653,3 +653,6 @@ Code that uses pointers becomes `unsafe`; turning it into safe Rust is left to a
 
 - 2026-11-27 c2rust: 変換できない関数(例: `int **` 引数)は本体ごと TODO のコメントにし、残りが rustc を通る形で出力する(以前は閉じ括弧が余ってビルド不能)。`int **` 自体は未対応。/ c2rust: a function that cannot be converted (e.g. an `int **` parameter) is commented out whole as TODO so the rest still compiles (previously a stray `}` broke the build); `int **` itself is still unsupported.
 
+
+- 2026-11-27 c2rust: 丸括弧をまたぐ複数行の文(printf・関数宣言・呼び出し)を1行につないで変換(`join_multiline`)。サンプル multiline が gcc と一致。/ c2rust: statements spanning lines inside parentheses are joined first; sample multiline matches gcc.
+
