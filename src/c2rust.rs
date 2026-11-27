@@ -1185,6 +1185,24 @@ fn rewrite_void_cmp(src: &str) -> String {
     out.join("\n")
 }
 
+/// 1 行の `struct P { char name[16]; int age; };` を、欄ごとの行に開く。
+fn expand_oneline_struct(src: &str) -> String {
+    let re = Regex::new(r"^(\s*struct\s+\w+)\s*\{(.*)\}\s*;\s*$").unwrap();
+    let mut out: Vec<String> = vec![];
+    for l in src.lines() {
+        if let Some(c) = re.captures(l) {
+            out.push(format!("{} {{", &c[1]));
+            for f in c[2].split(';').map(|x| x.trim()).filter(|x| !x.is_empty()) {
+                out.push(format!("    {f};"));
+            }
+            out.push("};".to_string());
+        } else {
+            out.push(l.to_string());
+        }
+    }
+    out.join("\n")
+}
+
 fn strip_block_comments(src: &str) -> String {
     let b: Vec<char> = src.chars().collect();
     let (mut o, mut i, mut q) = (String::new(), 0, false);
@@ -1767,7 +1785,7 @@ fn rewrite_ptr_params(src: &str) -> String {
 }
 
 pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, String)> {
-    let src_owned = rewrite_ptr_params(&rewrite_void_cmp(&hoist_static_locals(&split_one_liners(&join_multiline(&expand_enums(&expand_typedef_structs(&expand_fn_macros(&strip_block_comments(src)))))))));
+    let src_owned = rewrite_ptr_params(&rewrite_void_cmp(&hoist_static_locals(&split_one_liners(&join_multiline(&expand_oneline_struct(&expand_enums(&expand_typedef_structs(&expand_fn_macros(&strip_block_comments(src))))))))));
     let src: &str = &src_owned;
     let func = Regex::new(&format!(r"^({TYPES}|void)(?:\s+|\s*(\*)\s*)(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)\s*\{{?\s*$")).unwrap();
     let multi = Regex::new(&format!(r"^({TYPES})\s+(.+);$")).unwrap();
