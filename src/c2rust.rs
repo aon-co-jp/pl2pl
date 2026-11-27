@@ -1014,6 +1014,51 @@ fn strip_comment(l: &str) -> &str {
 }
 
 /// `/* ... */` を取り除く(文字列の中は残す。改行は保って行番号を変えない)。
+/// 丸括弧が閉じていない行は、閉じるまで次の行をつないで1行にする(複数行にまたがる printf や関数呼び出し)。
+fn join_multiline(src: &str) -> String {
+    fn open_parens(t: &str) -> i32 {
+        let (mut q, mut esc, mut d) = (None::<char>, false, 0i32);
+        for ch in t.chars() {
+            if let Some(qc) = q {
+                if esc { esc = false } else if ch == '\\' { esc = true } else if ch == qc { q = None }
+                continue;
+            }
+            match ch {
+                '"' | '\'' => q = Some(ch),
+                '(' => d += 1,
+                ')' => d -= 1,
+                _ => {}
+            }
+        }
+        d
+    }
+    let mut out: Vec<String> = vec![];
+    let mut cur = String::new();
+    let mut d = 0i32;
+    for line in src.lines() {
+        let t = line.trim();
+        if d == 0 && (t.starts_with('#') || t.is_empty()) {
+            out.push(line.to_string());
+            continue;
+        }
+        if d == 0 {
+            cur = line.to_string();
+        } else {
+            cur.push(' ');
+            cur.push_str(t);
+        }
+        d += open_parens(t);
+        if d <= 0 {
+            d = 0;
+            out.push(std::mem::take(&mut cur));
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out.join("\n")
+}
+
 fn strip_block_comments(src: &str) -> String {
     let b: Vec<char> = src.chars().collect();
     let (mut o, mut i, mut q) = (String::new(), 0, false);
@@ -1596,7 +1641,7 @@ fn rewrite_ptr_params(src: &str) -> String {
 }
 
 pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, String)> {
-    let src_owned = rewrite_ptr_params(&split_one_liners(&expand_enums(&expand_typedef_structs(&expand_fn_macros(&strip_block_comments(src))))));
+    let src_owned = rewrite_ptr_params(&split_one_liners(&join_multiline(&expand_enums(&expand_typedef_structs(&expand_fn_macros(&strip_block_comments(src)))))));
     let src: &str = &src_owned;
     let func = Regex::new(&format!(r"^({TYPES}|void)(?:\s+|\s*(\*)\s*)(\w+)\s*\(([^)]*)\)\s*\{{?\s*$")).unwrap();
     let multi = Regex::new(&format!(r"^({TYPES})\s+(.+);$")).unwrap();
