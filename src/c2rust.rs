@@ -1607,7 +1607,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
     let whl = Regex::new(r"^while\s*\((.*)\)\s*\{$").unwrap();
     let call = Regex::new(r"^(printf|puts)\s*\((.*)\)\s*;$").unwrap();
     let fpr = Regex::new(r"^fprintf\s*\((.*)\)\s*;$").unwrap();
-    let sprintf_re = Regex::new(r"^sprintf\s*\((.*)\)\s*;$").unwrap();
+    let sprintf_re = Regex::new(r"^(?:sn|s)printf\s*\((.*)\)\s*;$").unwrap();
     let scanf_re = Regex::new(r"^scanf\s*\((.*)\)\s*;$").unwrap();
     let cout = Regex::new(r"^(?:std::)?cout\s*<<\s*(.*);$").unwrap();
     let incp = Regex::new(r"^(.+?)\s*(\+\+|--)\s*;$").unwrap();
@@ -1929,7 +1929,8 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
             }
         } else if let Some(c) = sprintf_re.captures(l) {
             // sprintf(buf, "...", 引数...) → c_sprintf(buf, &format!(...))
-            let parts = split_args(&c[1]);
+            let mut parts = split_args(&c[1]);
+            if l.trim_start().starts_with("snprintf") && parts.len() >= 3 { parts.remove(1); }
             if parts.len() >= 2 {
                 let rest = parts[1..].join(",");
                 emit = fmt(&rest).and_then(|f| match ex(parts[0].trim()) {

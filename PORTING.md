@@ -646,3 +646,6 @@ Code that uses pointers becomes `unsafe`; turning it into safe Rust is left to a
 
 - 2026-11-27 c2rust: ポインター引数を `v[i]` で使う関数は配列引数へ、`const` は外す、`sprintf(buf, ...)` に対応。サンプル program3 が gcc と一致。/ c2rust: pointer params indexed with `[]` become arrays, `const` is dropped, `sprintf` is supported; sample program3 matches gcc.
 
+
+- 2026-11-27 c2rust: `snprintf` に対応(サイズ引数は捨てる)。/ c2rust: `snprintf` supported (size argument dropped).
+
