@@ -650,3 +650,6 @@ Code that uses pointers becomes `unsafe`; turning it into safe Rust is left to a
 
 - 2026-11-27 c2rust: `snprintf` に対応(サイズ引数は捨てる)。/ c2rust: `snprintf` supported (size argument dropped).
 
+
+- 2026-11-27 c2rust: 変換できない関数(例: `int **` 引数)は本体ごと TODO のコメントにし、残りが rustc を通る形で出力する(以前は閉じ括弧が余ってビルド不能)。`int **` 自体は未対応。/ c2rust: a function that cannot be converted (e.g. an `int **` parameter) is commented out whole as TODO so the rest still compiles (previously a stray `}` broke the build); `int **` itself is still unsupported.
+
