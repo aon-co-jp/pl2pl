@@ -668,3 +668,6 @@ Code that uses pointers becomes `unsafe`; turning it into safe Rust is left to a
 
 - 2026-11-27 c2rust: 1行に書いた `struct P { char name[16]; int age; };` を欄ごとに開いて変換(`expand_oneline_struct`)。構造体配列と文字列関数のサンプル structarr が gcc と一致。/ c2rust: a one-line `struct` definition is expanded per field; sample structarr (struct array plus string functions) matches gcc.
 
+
+- 2026-11-27 c2rust: 1行の `for (struct Node *p = head; p; p = p->next) stmt;` を一般形の for として変換し(split_one_liners を2回通す)、変換できないブロックの開きと対応する `}` を両方 TODO にして括弧の数を保つ。連結リストのサンプル linkedlist が gcc と一致。/ c2rust: one-line general `for` loops are now converted (two split passes), and an unconvertible block opener and its `}` are both left as TODO so braces stay balanced; sample linkedlist (malloc'd linked list) matches gcc.
+
