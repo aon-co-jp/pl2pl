@@ -166,6 +166,7 @@ fn c_fopen(path: *mut u8, mode: *mut u8) -> *mut CFile {
 }
 fn c_fclose(f: *mut CFile) -> i32 { if !f.is_null() { unsafe { drop(Box::from_raw(f)); } } 0 }
 fn c_fputs(f: *mut CFile, s: &str) -> i32 { use std::io::Write; match unsafe { (*f).w.as_mut() } { Some(w) => { let _ = w.write_all(s.as_bytes()); 0 } None => -1 } }
+fn c_sprintf(d: *mut u8, s: &str) { unsafe { for (i, b) in s.bytes().enumerate() { *d.add(i) = b; } *d.add(s.len()) = 0; } }
 fn c_fputs_p(s: *mut u8, f: *mut CFile) -> i32 { c_fputs(f, c_str(s)) }
 fn c_fgets(buf: *mut u8, n: i32, f: *mut CFile) -> *mut u8 {
     use std::io::BufRead;
@@ -1547,8 +1548,55 @@ fn expand_typedef_structs(src: &str) -> String {
     out
 }
 
+/// 関数の引数 `double *v` が本体で `v[i]` のように添字で使われているときは、配列の引数 `double v[]` に直す
+/// (Rust の `&mut f64` では添字が使えない)。`const` は意味を持たないので外す。
+fn rewrite_ptr_params(src: &str) -> String {
+    let cst = Regex::new(r"\bconst\s+").unwrap();
+    let src = cst.replace_all(src, "").into_owned();
+    let head = Regex::new(&format!(r"^(?:{TYPES}|void)(?:\s+|\s*\*\s*)\w+\s*\(([^)]*)\)\s*\{{$")).unwrap();
+    let lines: Vec<String> = src.lines().map(|s| s.to_string()).collect();
+    let mut out = lines.clone();
+    let mut i = 0;
+    while i < lines.len() {
+        let t = lines[i].trim();
+        if let Some(c) = head.captures(t) {
+            // 本体の終わり
+            let mut d = 0i32;
+            let mut j = i;
+            loop {
+                d += lines[j].matches('{').count() as i32 - lines[j].matches('}').count() as i32;
+                if d <= 0 || j + 1 >= lines.len() {
+                    break;
+                }
+                j += 1;
+            }
+            let body = lines[i + 1..=j.min(lines.len() - 1)].join("\n");
+            let params = c[1].to_string();
+            let pre = Regex::new(&format!(r"^({TYPES})\s*\*\s*(\w+)$")).unwrap();
+            let newp: Vec<String> = params
+                .split(',')
+                .map(|p| {
+                    let p = p.trim();
+                    match pre.captures(p) {
+                        Some(m) if !m[1].contains("char") && !m[1].starts_with("struct") && Regex::new(&format!(r"\b{}\s*\[", regex::escape(&m[2]))).unwrap().is_match(&body) => {
+                            format!("{} {}[]", &m[1], &m[2])
+                        }
+                        _ => p.to_string(),
+                    }
+                })
+                .collect();
+            let np = newp.join(", ");
+            if np != params.split(',').map(|p| p.trim()).collect::<Vec<_>>().join(", ") {
+                out[i] = lines[i].replacen(&params, &np, 1);
+            }
+        }
+        i += 1;
+    }
+    out.join("\n")
+}
+
 pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, String)> {
-    let src_owned = split_one_liners(&expand_enums(&expand_typedef_structs(&expand_fn_macros(&strip_block_comments(src)))));
+    let src_owned = rewrite_ptr_params(&split_one_liners(&expand_enums(&expand_typedef_structs(&expand_fn_macros(&strip_block_comments(src))))));
     let src: &str = &src_owned;
     let func = Regex::new(&format!(r"^({TYPES}|void)(?:\s+|\s*(\*)\s*)(\w+)\s*\(([^)]*)\)\s*\{{?\s*$")).unwrap();
     let multi = Regex::new(&format!(r"^({TYPES})\s+(.+);$")).unwrap();
@@ -1559,6 +1607,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
     let whl = Regex::new(r"^while\s*\((.*)\)\s*\{$").unwrap();
     let call = Regex::new(r"^(printf|puts)\s*\((.*)\)\s*;$").unwrap();
     let fpr = Regex::new(r"^fprintf\s*\((.*)\)\s*;$").unwrap();
+    let sprintf_re = Regex::new(r"^sprintf\s*\((.*)\)\s*;$").unwrap();
     let scanf_re = Regex::new(r"^scanf\s*\((.*)\)\s*;$").unwrap();
     let cout = Regex::new(r"^(?:std::)?cout\s*<<\s*(.*);$").unwrap();
     let incp = Regex::new(r"^(.+?)\s*(\+\+|--)\s*;$").unwrap();
@@ -1878,6 +1927,17 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
                     },
                 });
             }
+        } else if let Some(c) = sprintf_re.captures(l) {
+            // sprintf(buf, "...", 引数...) → c_sprintf(buf, &format!(...))
+            let parts = split_args(&c[1]);
+            if parts.len() >= 2 {
+                let rest = parts[1..].join(",");
+                emit = fmt(&rest).and_then(|f| match ex(parts[0].trim()) {
+                    Some((e, T::Arr(el, _))) | Some((e, T::Slice(el))) if *el == T::Char => Some(format!("c_sprintf({e}.as_mut_ptr(), &format!({f}));")),
+                    Some((e, T::Raw(el))) if *el == T::Char => Some(format!("c_sprintf({e}, &format!({f}));")),
+                    _ => None,
+                });
+            }
         } else if let Some(c) = scanf_re.captures(l) {
             // scanf("%d %lf", &a, &b); → 変数へ代入(`&名前` だけ。空白区切りの数値)
             let parts = split_args(&c[1]);
@@ -1997,7 +2057,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
         out.push_str(&format!("{ind}// TODO(c2rust): {l}\n"));
         rep.push(format!("{name}:{}: 未対応 `{l}`", i + 1));
     }
-    let rt_used = ["c_strlen(", "c_strcpy(", "c_strcat(", "c_strcmp(", "c_atoi(", "c_str(", "c_malloc(", "c_calloc(", "c_free(", "c_fopen(", "c_fclose(", "c_fputs", "c_fgets(", "CFile", "c_scan_", "c_alt(", "c_altz("];
+    let rt_used = ["c_strlen(", "c_strcpy(", "c_strcat(", "c_strcmp(", "c_atoi(", "c_str(", "c_malloc(", "c_calloc(", "c_free(", "c_fopen(", "c_fclose(", "c_fputs", "c_fgets(", "CFile", "c_scan_", "c_alt(", "c_altz(", "c_sprintf("];
     if rt_used.iter().any(|k| out.contains(k)) {
         out.push_str(RUNTIME);
     }
