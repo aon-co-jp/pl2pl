@@ -930,7 +930,7 @@ fn param(p: &str) -> Option<(String, T)> {
     let re2 = Regex::new(&format!(r"^({TYPES})\s*\*\s*\*\s*(\w+)$")).unwrap();
     if let Some(c) = re2.captures(p.trim()) {
         let b = base_ty(&c[1])?;
-        if matches!(b, T::I32 | T::I64 | T::F64 | T::F32) {
+        if matches!(b, T::I32 | T::I64 | T::F64 | T::F32 | T::Char | T::St(_)) {
             return Some((c[2].to_string(), T::Raw(Box::new(T::Raw(Box::new(b))))));
         }
         return None;
