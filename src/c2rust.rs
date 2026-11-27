@@ -1785,7 +1785,7 @@ fn rewrite_ptr_params(src: &str) -> String {
 }
 
 pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, String)> {
-    let src_owned = rewrite_ptr_params(&rewrite_void_cmp(&hoist_static_locals(&split_one_liners(&join_multiline(&expand_oneline_struct(&expand_enums(&expand_typedef_structs(&expand_fn_macros(&strip_block_comments(src))))))))));
+    let src_owned = rewrite_ptr_params(&rewrite_void_cmp(&hoist_static_locals(&split_one_liners(&split_one_liners(&join_multiline(&expand_oneline_struct(&expand_enums(&expand_typedef_structs(&expand_fn_macros(&strip_block_comments(src)))))))))));
     let src: &str = &src_owned;
     let func = Regex::new(&format!(r"^({TYPES}|void)(?:\s+|\s*(\*)\s*)(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)\s*\{{?\s*$")).unwrap();
     let multi = Regex::new(&format!(r"^({TYPES})\s+(.+);$")).unwrap();
@@ -1880,6 +1880,7 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
     let mut in_struct = false;
     let mut todo = 0;
     let mut skip_fn = 0i32;
+    let mut todo_close: Vec<usize> = vec![];
     for (i, raw) in src.lines().enumerate() {
         let l = strip_comment(raw).trim();
         if l.is_empty() || l.starts_with("#include") || l.starts_with("using namespace") {
@@ -2055,6 +2056,12 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
                     continue;
                 }
             }
+        }
+        if l == "}" && todo_close.last() == Some(&stack.len()) {
+            todo_close.pop();
+            stack.pop();
+            out.push_str(&format!("{}// TODO(c2rust): }}\n", "    ".repeat(stack.len())));
+            continue;
         }
         if l == "}" {
             stack.pop();
@@ -2278,6 +2285,11 @@ pub fn convert(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<(String, Str
         todo += 1;
         out.push_str(&format!("{ind}// TODO(c2rust): {l}\n"));
         rep.push(format!("{name}:{}: 未対応 `{l}`", i + 1));
+        if l.ends_with('{') {
+            // 変換できなかったブロックの開き。対応する `}` も TODO として残す(括弧の数を崩さない)
+            stack.push(false);
+            todo_close.push(stack.len());
+        }
     }
     let rt_used = ["c_strlen(", "c_strcpy(", "c_strcat(", "c_strcmp(", "c_atoi(", "c_str(", "c_malloc(", "c_calloc(", "c_free(", "c_fopen(", "c_fclose(", "c_fputs", "c_fgets(", "CFile", "c_scan_", "c_alt(", "c_altz(", "c_sprintf("];
     if rt_used.iter().any(|k| out.contains(k)) {
