@@ -309,6 +309,7 @@ pub fn parse_rust(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<St> {
     let mainre = Regex::new(r"^fn\s+main\s*\(\s*\)\s*\{$").unwrap();
     let letre = Regex::new(r"^let\s+(mut\s+)?([A-Za-z_]\w*)\s*(?::\s*(\w+))?\s*(?:=\s*(.+))?;$").unwrap();
     let forre = Regex::new(r"^for\s+(\w+)\s+in\s+(\(?)(.+?)\s*\.\.(=?)\s*(.+?)(\)?)(?:\.rev\(\))?\s*\{$").unwrap();
+    let forrange = Regex::new(r"^for\s+(\w+)\s+in\s+\(\s*(.+?)\s*\.\.(=?)\s*(.+?)\s*\)((?:\s*\.\s*(?:rev\(\)|step_by\([^()]+\)))+)\s*\{$").unwrap();
     let whilere = Regex::new(r"^while\s+(.+)\s*\{$").unwrap();
     let ifre = Regex::new(r"^(\}\s*else\s+)?if\s+(.+)\s*\{$").unwrap();
     let elsere = Regex::new(r"^\}\s*else\s*\{$").unwrap();
@@ -341,7 +342,27 @@ pub fn parse_rust(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<St> {
             }
             continue;
         };
-        if let Some(c) = forre.captures(&l) {
+        if let Some(c) = forrange.captures(&l) {
+            // for i in (a..b).rev() / (a..=b).step_by(k) / (a..b).step_by(k).rev() など
+            let (v, a, incl, b, tail) = (&c[1], rust_expr(&c[2]), !c[3].is_empty(), rust_expr(&c[4]), c[5].replace(' ', ""));
+            let step = Regex::new(r"\.step_by\(([^()]+)\)").unwrap().captures(&tail).map(|x| rust_expr(&x[1]));
+            let rev = tail.ends_with(".rev()");
+            let rest = Regex::new(r"\.step_by\([^()]+\)|\.rev\(\)").unwrap().replace_all(&tail, "");
+            if !rest.is_empty() || (rev && step.is_some()) {
+                // step_by の後の rev は最後の値が端数で決まるので未対応
+                todo(&mut out, rep, "for の範囲", name, i, &l);
+                depth += 1;
+                continue;
+            }
+            vars.insert(v.to_string(), Ty::Int);
+            if rev {
+                let from = if incl { b } else { format!("{b} - 1") };
+                out.push(St::For { var: v.into(), from, to: a, incl: true, down: true, step: "1".into() });
+            } else {
+                out.push(St::For { var: v.into(), from: a, to: b, incl, down: false, step: step.unwrap_or_else(|| "1".into()) });
+            }
+            depth += 1;
+        } else if let Some(c) = forre.captures(&l) {
             if l.contains(".rev()") || l.contains("step_by") {
                 todo(&mut out, rep, "rev/step_by", name, i, &l);
                 depth += 1;
@@ -416,11 +437,8 @@ pub fn parse_rust(src: &str, name: &str, rep: &mut Vec<String>) -> Vec<St> {
                 let ty = infer(&e, &vars);
                 let prec: Option<usize> = m.get(3).and_then(|x| x.as_str().parse().ok());
                 let ty = if prec.is_some() && ty != Ty::Double { Ty::Double } else { ty };
-                if ty == Ty::Double && prec.is_none() {
-                    // Rust の {} は最短表記。C の %g と一致しない値があるので知らせる
-                    rep.push(format!("{name}:{}: 小数の {{}} は %g として書きました(桁数が違う場合あり)", i + 1));
-                }
-                parts.push(Part::Val { expr: e, ty, width: m.get(2).and_then(|x| x.as_str().parse().ok()), prec, g: prec.is_none() });
+                // 小数の {} は Rust と同じ最短表記を出す関数 rs_f64 を使う(prec: None かつ g: false)
+                parts.push(Part::Val { expr: e, ty, width: m.get(2).and_then(|x| x.as_str().parse().ok()), prec, g: false });
             }
             parts.push(Part::Lit(unescape(&fmt2[last..]).replace('\u{1}', "{").replace('\u{2}', "}")));
             if bad || k != args.len() {
@@ -508,6 +526,11 @@ pub fn emit_c(sts: &[St], tag: &str) -> String {
                                 }
                                 Ty::Str => f.push_str(&format!("%{w}s")),
                                 Ty::Double if *g => f.push_str(&format!("%{w}g")),
+                                Ty::Double if prec.is_none() => {
+                                    f.push_str(&format!("%{w}s"));
+                                    a.push(format!("rs_f64({expr})"));
+                                    continue;
+                                }
                                 Ty::Double => f.push_str(&format!("%{w}.{}f", prec.unwrap_or(6))),
                             }
                             a.push(expr.clone());
@@ -523,8 +546,17 @@ pub fn emit_c(sts: &[St], tag: &str) -> String {
         }
     }
     o.push_str("    return 0;\n}\n");
+    if o.contains("rs_f64(") {
+        // Rust の {} と同じ最短表記(読み戻して同じ値になる最小の桁数、指数表記なし)
+        o = o.replacen("int main(void) {", RS_F64_C, 1);
+    }
     o
 }
+
+const RS_F64_C: &str = "#include <stdlib.h>\n/* Rust の f64 の {} と同じ最短表記 */\nstatic const char *rs_f64(double x) {\n    static char buf[8][400];\n    static int k = 0;\n    char *b = buf[k++ % 8];\n    for (int p = 0; p <= 340; p++) {\n        snprintf(b, 400, \"%.*f\", p, x);\n        if (strtod(b, NULL) == x) break;\n    }\n    return b;\n}\n\nint main(void) {";
+
+const RS_F64_F: &str = "contains\n  ! Rust の f64 の {} と同じ最短表記(読み戻して同じ値になる最小の桁数、指数表記なし)\n  function rs_f64(x) result(r)\n    real(8), intent(in) :: x\n    character(len=:), allocatable :: r\n    character(len=400) :: b\n    character(len=16) :: f\n    integer :: p\n    real(8) :: y\n    do p = 0, 340\n      write(f, '(a,i0,a)') '(f0.', p, ')'\n      write(b, f) x\n      read(b, *) y\n      if (y == x) exit\n    end do\n    r = trim(adjustl(b))\n    if (r(len(r):len(r)) == '.') r = r(1:len(r)-1)\n    if (r(1:1) == '.') r = '0' // r\n    if (len(r) >= 2) then\n      if (r(1:2) == '-.') r = '-0' // r(2:)\n    end if\n  end function rs_f64\n";
+
 
 // ---------------- 中間表現 → Fortran ----------------
 
@@ -541,6 +573,8 @@ pub fn f_expr(e: &str) -> String {
     s = Regex::new(r"\bfalse\b").unwrap().replace_all(&s, ".false.").to_string();
     // 1.5 → 1.5d0(倍精度)。指数付き 1e3 → 1d3
     s = Regex::new(r"\b(\d+\.\d*)([eE]([-+]?\d+))?").unwrap().replace_all(&s, |c: &regex::Captures| format!("{}d{}", &c[1], c.get(3).map(|m| m.as_str()).unwrap_or("0"))).to_string();
+    // int に収まらない整数リテラルは 8 バイト(_8)に
+    s = Regex::new(r"\b\d{10,}\b").unwrap().replace_all(&s, |c: &regex::Captures| if c[0].parse::<i64>().map(|v| v > i32::MAX as i64).unwrap_or(true) { format!("{}_8", &c[0]) } else { c[0].to_string() }).to_string();
     Regex::new(r"\s+").unwrap().replace_all(s.trim(), " ").to_string()
 }
 
@@ -634,9 +668,17 @@ pub fn emit_f(sts: &[St], tag: &str, prog: &str, rep: &mut Vec<String>) -> Strin
                                     continue;
                                 }
                                 Ty::Str => f.push("a".into()),
+                                Ty::Double if prec.is_none() && !*g => {
+                                    f.push("a".into());
+                                    if width.is_some() {
+                                        rep.push(format!("{prog}: 小数の {{:N}} の幅は無視しました"));
+                                    }
+                                    a.push(format!("rs_f64({})", f_expr(expr)));
+                                    continue;
+                                }
                                 Ty::Double if *g => {
                                     f.push("g0".into());
-                                    rep.push(format!("{prog}: %g / {{}} の小数は g0 にしました(桁数・表記が C と違う場合あり)"));
+                                    rep.push(format!("{prog}: %g の小数は g0 にしました(桁数・表記が C と違う場合あり)"));
                                 }
                                 Ty::Double => f.push(format!("f{w}.{}", prec.unwrap_or(6))),
                             }
@@ -671,6 +713,9 @@ pub fn emit_f(sts: &[St], tag: &str, prog: &str, rep: &mut Vec<String>) -> Strin
             res.push_str(line);
         }
         res.push('\n');
+    }
+    if res.contains("rs_f64(") {
+        res.push_str(RS_F64_F);
     }
     res.push_str(&format!("end program {prog}\n"));
     res
@@ -753,5 +798,24 @@ mod tests {
         let mut r = vec![];
         let t = &rust2c("fn f() {}\nfn main() {\n    let v = vec![1];\n    let x = 1;\n    let x = 2;\n}\n", "u.rs", &mut r)[0].1;
         assert!(t.contains("TODO(rust2c)") && r.len() >= 2, "{t}\n{r:?}");
+    }
+}
+#[cfg(test)]
+mod big_lit {
+    #[test]
+    fn big_int_literal_is_kind8() {
+        assert_eq!(super::f_expr("((long long)i) * 3000000000"), "(int(i, 8)) * 3000000000_8");
+    }
+}
+#[cfg(test)]
+mod rev_step {
+    #[test]
+    fn rust_rev_and_step_by() {
+        let mut r = vec![];
+        let src = "fn main() {\n    for i in (0..5).rev() {\n    }\n    for j in (1..=10).step_by(3) {\n    }\n    for k in (0..9).step_by(2).rev() {\n    }\n}\n";
+        let t = &super::rust2c(src, "s.rs", &mut r)[0].1;
+        assert!(t.contains("for (int i = 5 - 1; i >= 0; i--) {") && t.contains("for (int j = 1; j <= 10; j += 3) {") && t.contains("TODO(rust2c): for k"), "{t}");
+        let f = &super::rust2f(src, "s.rs", &mut vec![])[0].1;
+        assert!(f.contains("do i = 5 - 1, 0, -1") && f.contains("do j = 1, 10, 3"), "{f}");
     }
 }

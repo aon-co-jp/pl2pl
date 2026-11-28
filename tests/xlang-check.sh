@@ -1,7 +1,8 @@
 #!/bin/sh
 # pl2pl c2cpp / cpp2c / rust2c の出力を gcc・g++・rustc で実際にビルド・実行し、元の出力と一致するか確かめる(WSL/Linux で実行)。
-# c2f / rust2f は gfortran がある時だけ比較する(無ければ「未確認」と表示)。
-# 使い方: sh tests/xlang-check.sh <pl2pl の出力ディレクトリ>  (出力は c2f c2cpp cpp2c rust2c rust2f の下位フォルダ)
+# c2f / rust2f / f2c は gfortran がある時だけ比較する(無ければ「未確認」と表示)。
+# sudo が無くても、apt-get download gfortran-15 gfortran-15-x86-64-linux-gnu libgfortran-15-dev libgfortran5 → dpkg -x で展開して使える。
+# 使い方: sh tests/xlang-check.sh <pl2pl の出力ディレクトリ>  (出力は c2f c2cpp cpp2c rust2c rust2f f2c の下位フォルダ)
 set -e
 S=$(dirname "$0")/samples/xlang; O=$1; T=$(mktemp -d); ng=0
 cmp_out() { if [ "$2" = "$3" ]; then echo "一致: $1"; else echo "不一致: $1"; echo "--- 元"; echo "$2"; echo "--- 変換後"; echo "$3"; ng=1; fi; }
@@ -14,6 +15,7 @@ gcc -std=c11 -Wall -o $T/r1c $O/rust2c/r1.c; cmp_out "rust2c (rustc ↔ gcc)" "$
 if command -v gfortran >/dev/null; then
   gfortran -o $T/c1f $O/c2f/c1.f90; cmp_out "c2f (gcc ↔ gfortran)" "$A" "$($T/c1f)"
   gfortran -o $T/r1f $O/rust2f/r1.f90; cmp_out "rust2f (rustc ↔ gfortran)" "$R" "$($T/r1f)"
+  gfortran -o $T/f1 $S/f1.f90; gcc -std=c11 -Wall -o $T/f1c $O/f2c/f1.c; cmp_out "f2c (gfortran ↔ gcc)" "$($T/f1)" "$($T/f1c)"
 else
   echo "未確認: c2f / rust2f(gfortran がありません)"
 fi
